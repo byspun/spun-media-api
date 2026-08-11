@@ -1,0 +1,16 @@
+{
+  "name": "spun-media-api",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "worker",
+    "providers"
+  ],
+  "scripts": {
+    "dev:worker":    "cd worker && npm run dev",
+    "dev:providers": "cd providers && npm run dev",
+    "deploy:worker": "cd worker && npm run deploy",
+    "type-check":    "cd worker && npm run type-check && cd ../providers && npm run type-check",
+    "install:all":   "npm install && cd worker && npm install && cd ../providers && npm install"
+  }
+}
