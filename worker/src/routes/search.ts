@@ -161,31 +161,8 @@ search.get('/', async (c) => {
   return jsonResponse(payload);
 });
 
-// ─── GET /search/:type ────────────────────────────────────────────────────────
-
-search.get('/:type', async (c) => {
-  const rawType = c.req.param('type') as ContentType;
-  const q       = c.req.query('q')?.trim();
-  const page    = parseInt(c.req.query('page') ?? '1');
-
-  if (!['movie', 'tv', 'anime'].includes(rawType)) {
-    return errorResponse('INVALID_TYPE', 'Type must be movie, tv, or anime.', 400);
-  }
-  if (!q || q.length < 2) {
-    return errorResponse('MISSING_QUERY', 'Query must be at least 2 characters.', 400);
-  }
-
-  // Delegate to unified search handler with type param
-  const url = new URL(c.req.url);
-  url.pathname = url.pathname.replace(`/${rawType}`, '');
-  url.searchParams.set('type', rawType);
-  url.searchParams.set('q', q);
-  url.searchParams.set('page', String(page));
-
-  return c.redirect(url.toString(), 307);
-});
-
 // ─── GET /search/suggestions ──────────────────────────────────────────────────
+// Universal — fans out TMDB + AniList, returns mixed top results.
 
 search.get('/suggestions', async (c) => {
   const q = c.req.query('q')?.trim();
@@ -218,6 +195,69 @@ search.get('/suggestions', async (c) => {
 
   const payload = { suggestions };
   await kvSet(c.env, cacheKey, payload, TTL.suggestions);
+  return jsonResponse(payload);
+});
+
+// ─── GET /search/movie ────────────────────────────────────────────────────────
+
+search.get('/movie', async (c) => {
+  const q    = c.req.query('q')?.trim();
+  const page = parseInt(c.req.query('page') ?? '1');
+  if (!q || q.length < 2) return errorResponse('MISSING_QUERY', 'Query must be at least 2 characters.', 400);
+
+  const cacheKey = CacheKeys.search(q, 'movie', page);
+  const cached   = await kvGet(c.env, cacheKey);
+  if (cached) return jsonResponse(cached);
+
+  const tmdb      = await searchTmdb(c.env, q, page);
+  const movieOnly = tmdb.results.filter((r) => r.media_type === 'movie');
+  const noAnime   = await filterOutAnime(c.env, movieOnly);
+  const items     = await Promise.all(noAnime.map((r) => tmdbToItem(c.env, r as any)));
+  const results   = items.filter((i): i is ContentItem => i !== null);
+
+  const payload = { page, total_pages: tmdb.total_pages, total_results: tmdb.total_results, results };
+  await kvSet(c.env, cacheKey, payload, TTL.search);
+  return jsonResponse(payload);
+});
+
+// ─── GET /search/tv ───────────────────────────────────────────────────────────
+
+search.get('/tv', async (c) => {
+  const q    = c.req.query('q')?.trim();
+  const page = parseInt(c.req.query('page') ?? '1');
+  if (!q || q.length < 2) return errorResponse('MISSING_QUERY', 'Query must be at least 2 characters.', 400);
+
+  const cacheKey = CacheKeys.search(q, 'tv', page);
+  const cached   = await kvGet(c.env, cacheKey);
+  if (cached) return jsonResponse(cached);
+
+  const tmdb    = await searchTmdb(c.env, q, page);
+  const tvOnly  = tmdb.results.filter((r) => r.media_type === 'tv');
+  const noAnime = await filterOutAnime(c.env, tvOnly);
+  const items   = await Promise.all(noAnime.map((r) => tmdbToItem(c.env, r as any)));
+  const results = items.filter((i): i is ContentItem => i !== null);
+
+  const payload = { page, total_pages: tmdb.total_pages, total_results: tmdb.total_results, results };
+  await kvSet(c.env, cacheKey, payload, TTL.search);
+  return jsonResponse(payload);
+});
+
+// ─── GET /search/anime ────────────────────────────────────────────────────────
+
+search.get('/anime', async (c) => {
+  const q    = c.req.query('q')?.trim();
+  const page = parseInt(c.req.query('page') ?? '1');
+  if (!q || q.length < 2) return errorResponse('MISSING_QUERY', 'Query must be at least 2 characters.', 400);
+
+  const cacheKey = CacheKeys.search(q, 'anime', page);
+  const cached   = await kvGet(c.env, cacheKey);
+  if (cached) return jsonResponse(cached);
+
+  const { media, hasNextPage } = await searchAnilist(q, page, 20);
+  const items = await Promise.all(media.map((m) => anilistToItemWithId(c.env, m)));
+
+  const payload = { page, total_pages: hasNextPage ? page + 1 : page, total_results: items.length, results: items };
+  await kvSet(c.env, cacheKey, payload, TTL.search);
   return jsonResponse(payload);
 });
 

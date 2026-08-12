@@ -22,6 +22,9 @@ export interface Env {
   // SubDL subtitle API
   SUBDL_API_KEY: string;
 
+  // TasteDive similar content API
+  TASTEDIVE_API_KEY: string;
+
   // Environment flag
   ENVIRONMENT: string;
 }

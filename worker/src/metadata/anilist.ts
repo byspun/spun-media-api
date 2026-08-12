@@ -23,9 +23,14 @@ async function anilistQuery<T>(
       body: JSON.stringify({ query, variables }),
     });
     if (!res.ok) return null;
-    const json = await res.json() as { data?: T };
+    const json = await res.json() as { data?: T; errors?: Array<{ message: string }> };
+    if (json.errors?.length) {
+      console.error('[AniList GraphQL Error]', json.errors.map((e) => e.message).join(', '));
+      return null;
+    }
     return json.data ?? null;
-  } catch {
+  } catch (err) {
+    console.error('[AniList fetch error]', err);
     return null;
   }
 }
@@ -43,7 +48,7 @@ const MEDIA_FIELDS = `
   bannerImage
   averageScore
   genres
-  tags(sort: RANK_DESC) { name isMediaSpoiler rank }
+  tags(sort: POPULARITY_DESC) { name isMediaSpoiler rank }
   startDate { year month day }
   description(asHtml: false)
   studios(isMain: true) { nodes { name isAnimationStudio } }

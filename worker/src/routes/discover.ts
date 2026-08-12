@@ -22,6 +22,7 @@ import {
   getAnilistTrending,
   getAnilistPopular,
   getAnilistByGenre,
+  getAnilistStudioWorks,
   anilistTitle,
 } from '../metadata/anilist.js';
 import { resolveFromTmdb, resolveFromAnilist } from '../identity/resolver.js';
@@ -70,106 +71,6 @@ function buildStudioDiscoverParams(
 }
 
 // ─── GET /discover/:type ──────────────────────────────────────────────────────
-
-discover.get('/:type', async (c) => {
-  const rawType = c.req.param('type');
-  const genre   = c.req.query('genre');
-  const studio  = c.req.query('studio');
-  const page    = parseInt(c.req.query('page') ?? '1');
-
-  if (!['movie', 'tv', 'anime'].includes(rawType)) {
-    return errorResponse('INVALID_TYPE', 'Type must be movie, tv, or anime.', 400);
-  }
-
-  const cacheKey = CacheKeys.discover(rawType, genre ?? studio ?? 'all', page);
-  const cached   = await kvGet(c.env, cacheKey);
-  if (cached) return jsonResponse(cached);
-
-  let results:  ContentItem[] = [];
-  let hasMore = false;
-
-  if (rawType === 'anime') {
-    if (genre) {
-      const genreDef = getGenreById(genre);
-      if (!genreDef) return errorResponse('INVALID_GENRE', 'Unknown genre.', 400);
-
-      const anilistGenre = genreDef.anilist_genres?.[0];
-      if (!anilistGenre) return errorResponse('INVALID_GENRE', 'Genre not available for anime.', 400);
-
-      const media = await getAnilistByGenre(anilistGenre, page);
-      const items = await Promise.all(
-        media.map(async (m) => {
-          const title = anilistTitle(m);
-          const row   = await resolveFromAnilist(c.env, m.id, title, { malId: m.idMal ?? undefined });
-          return anilistToItem(m, row.spun_id);
-        })
-      );
-      results = items;
-      hasMore = media.length === 30;
-    } else {
-      const media = await getAnilistPopular(page);
-      const items = await Promise.all(
-        media.map(async (m) => {
-          const title = anilistTitle(m);
-          const row   = await resolveFromAnilist(c.env, m.id, title, { malId: m.idMal ?? undefined });
-          return anilistToItem(m, row.spun_id);
-        })
-      );
-      results = items;
-      hasMore = media.length === 30;
-    }
-  } else {
-    const mediaType = rawType as 'movie' | 'tv';
-    let params: Record<string, string | number | boolean> = {
-      sort_by: 'popularity.desc',
-    };
-
-    if (studio) {
-      // Fetch studio from DB
-      const sql  = getDb(c.env);
-      const rows = await sql`
-        SELECT * FROM studio_ids WHERE spun_studio_id = ${studio} LIMIT 1
-      `;
-      if (!rows.length) return errorResponse('INVALID_STUDIO', 'Unknown studio.', 400);
-
-      const studioRow   = rows[0] as StudioRow;
-      const studioParams = buildStudioDiscoverParams(studioRow, mediaType);
-      if (!studioParams) {
-        return errorResponse('INVALID_STUDIO', 'Studio not available for this content type.', 400);
-      }
-      params = { ...params, ...studioParams };
-    }
-
-    if (genre) {
-      const genreDef = getGenreById(genre);
-      if (!genreDef) return errorResponse('INVALID_GENRE', 'Unknown genre.', 400);
-
-      const genreIds = mediaType === 'movie'
-        ? genreDef.tmdb_movie_genre_ids ?? []
-        : genreDef.tmdb_tv_genre_ids    ?? [];
-
-      if (!genreIds.length) {
-        return errorResponse('INVALID_GENRE', 'Genre not available for this content type.', 400);
-      }
-      params.with_genres = genreIds.join(',');
-    }
-
-    const raw   = await tmdbDiscover(c.env, mediaType, params, page);
-    const items = await Promise.all(
-      raw.map(async (r) => {
-        const title = r.title || r.name || '';
-        const row   = await resolveFromTmdb(c.env, r.id, mediaType, title);
-        return tmdbResultToItem(r, row.spun_id, mediaType);
-      })
-    );
-    results = items;
-    hasMore = raw.length === 20;
-  }
-
-  const payload = { page, has_more: hasMore, results };
-  await kvSet(c.env, cacheKey, payload, TTL.discover);
-  return jsonResponse(payload);
-});
 
 // ─── GET /trending ────────────────────────────────────────────────────────────
 
@@ -396,7 +297,7 @@ discover.get('/studio/:studioId', async (c) => {
   let hasMore = false;
 
   if (studio.query_type === 'anilist_studio') {
-    const { getAnilistStudioWorks } = await import('../metadata/anilist.js');
+
     const anilistStudioId = parseInt(studio.query_value);
     const { media, works_count, hasNextPage } = await getAnilistStudioWorks(
       anilistStudioId, page
@@ -448,4 +349,103 @@ discover.get('/studio/:studioId', async (c) => {
   return jsonResponse(payload);
 });
 
+discover.get('/:type', async (c) => {
+  const rawType = c.req.param('type');
+  const genre   = c.req.query('genre');
+  const studio  = c.req.query('studio');
+  const page    = parseInt(c.req.query('page') ?? '1');
+
+  if (!['movie', 'tv', 'anime'].includes(rawType)) {
+    return errorResponse('INVALID_TYPE', 'Type must be movie, tv, or anime.', 400);
+  }
+
+  const cacheKey = CacheKeys.discover(rawType, genre ?? studio ?? 'all', page);
+  const cached   = await kvGet(c.env, cacheKey);
+  if (cached) return jsonResponse(cached);
+
+  let results:  ContentItem[] = [];
+  let hasMore = false;
+
+  if (rawType === 'anime') {
+    if (genre) {
+      const genreDef = getGenreById(genre);
+      if (!genreDef) return errorResponse('INVALID_GENRE', 'Unknown genre.', 400);
+
+      const anilistGenre = genreDef.anilist_genres?.[0];
+      if (!anilistGenre) return errorResponse('INVALID_GENRE', 'Genre not available for anime.', 400);
+
+      const media = await getAnilistByGenre(anilistGenre, page);
+      const items = await Promise.all(
+        media.map(async (m) => {
+          const title = anilistTitle(m);
+          const row   = await resolveFromAnilist(c.env, m.id, title, { malId: m.idMal ?? undefined });
+          return anilistToItem(m, row.spun_id);
+        })
+      );
+      results = items;
+      hasMore = media.length === 30;
+    } else {
+      const media = await getAnilistPopular(page);
+      const items = await Promise.all(
+        media.map(async (m) => {
+          const title = anilistTitle(m);
+          const row   = await resolveFromAnilist(c.env, m.id, title, { malId: m.idMal ?? undefined });
+          return anilistToItem(m, row.spun_id);
+        })
+      );
+      results = items;
+      hasMore = media.length === 30;
+    }
+  } else {
+    const mediaType = rawType as 'movie' | 'tv';
+    let params: Record<string, string | number | boolean> = {
+      sort_by: 'popularity.desc',
+    };
+
+    if (studio) {
+      // Fetch studio from DB
+      const sql  = getDb(c.env);
+      const rows = await sql`
+        SELECT * FROM studio_ids WHERE spun_studio_id = ${studio} LIMIT 1
+      `;
+      if (!rows.length) return errorResponse('INVALID_STUDIO', 'Unknown studio.', 400);
+
+      const studioRow   = rows[0] as StudioRow;
+      const studioParams = buildStudioDiscoverParams(studioRow, mediaType);
+      if (!studioParams) {
+        return errorResponse('INVALID_STUDIO', 'Studio not available for this content type.', 400);
+      }
+      params = { ...params, ...studioParams };
+    }
+
+    if (genre) {
+      const genreDef = getGenreById(genre);
+      if (!genreDef) return errorResponse('INVALID_GENRE', 'Unknown genre.', 400);
+
+      const genreIds = mediaType === 'movie'
+        ? genreDef.tmdb_movie_genre_ids ?? []
+        : genreDef.tmdb_tv_genre_ids    ?? [];
+
+      if (!genreIds.length) {
+        return errorResponse('INVALID_GENRE', 'Genre not available for this content type.', 400);
+      }
+      params.with_genres = genreIds.join(',');
+    }
+
+    const raw   = await tmdbDiscover(c.env, mediaType, params, page);
+    const items = await Promise.all(
+      raw.map(async (r) => {
+        const title = r.title || r.name || '';
+        const row   = await resolveFromTmdb(c.env, r.id, mediaType, title);
+        return tmdbResultToItem(r, row.spun_id, mediaType);
+      })
+    );
+    results = items;
+    hasMore = raw.length === 20;
+  }
+
+  const payload = { page, has_more: hasMore, results };
+  await kvSet(c.env, cacheKey, payload, TTL.discover);
+  return jsonResponse(payload);
+});
 export default discover;

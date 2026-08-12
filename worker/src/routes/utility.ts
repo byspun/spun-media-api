@@ -65,67 +65,70 @@ utility.get('/resolve', async (c) => {
 // ─── GET /health ──────────────────────────────────────────────────────────────
 
 utility.get('/health', async (c) => {
-  const cacheKey = CacheKeys.health();
-  const cached   = await kvGet(c.env, cacheKey);
-  if (cached) return jsonResponse(cached);
+  try {
+    const cacheKey = CacheKeys.health();
+    const cached   = await kvGet(c.env, cacheKey);
+    if (cached) return jsonResponse(cached);
 
-  // Ping all upstream services in parallel
-  const [tmdbOk, anilistOk, jikanOk, providerStatus] = await Promise.all([
-    // TMDB
-    fetch('https://api.themoviedb.org/3/configuration', {
-      headers: { Authorization: `Bearer ${c.env.TMDB_BEARER_TOKEN}` },
-    }).then((r) => r.ok).catch(() => false),
+    const [tmdbOk, anilistOk, jikanOk, providerStatus] = await Promise.all([
+      fetch('https://api.themoviedb.org/3/configuration', {
+        headers: { Authorization: `Bearer ${c.env.TMDB_BEARER_TOKEN}` },
+      }).then((r) => r.ok).catch(() => false),
 
-    // AniList
-    fetch('https://graphql.anilist.co', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ query: '{ Page(page:1,perPage:1) { media { id } } }' }),
-    }).then((r) => r.ok).catch(() => false),
+      fetch('https://graphql.anilist.co', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ query: '{ Page(page:1,perPage:1) { media(type:ANIME) { id } } }' }),
+      }).then((r) => r.ok).catch(() => false),
 
-    // Jikan
-    fetch('https://api.jikan.moe/v4/anime/1')
-      .then((r) => r.ok)
-      .catch(() => false),
+      fetch('https://api.jikan.moe/v4/anime/1')
+        .then((r) => r.ok)
+        .catch(() => false),
 
-    // Provider health from DB
-    (async () => {
-      try {
-        const sql  = getDb(c.env);
-        const rows = await sql`
-          SELECT status, COUNT(*) as count
-          FROM provider_health
-          GROUP BY status
-        `;
-        const counts: Record<string, number> = {};
-        for (const row of rows as Array<{ status: string; count: string }>) {
-          counts[row.status] = parseInt(row.count);
+      (async (): Promise<string> => {
+        try {
+          const sql  = getDb(c.env);
+          const rows = await sql`
+            SELECT status, COUNT(*) as count
+            FROM provider_health
+            GROUP BY status
+          `;
+          const counts: Record<string, number> = {};
+          for (const row of rows as Array<{ status: string; count: string }>) {
+            counts[row.status] = parseInt(row.count);
+          }
+          if (!counts.healthy && !counts.degraded && !counts.down) return 'ok';
+          if (counts.down && counts.down > (counts.healthy ?? 0)) return 'down';
+          if (counts.degraded) return 'degraded';
+          return 'ok';
+        } catch {
+          return 'ok';
         }
-        if (!counts.healthy && !counts.degraded && !counts.down) return 'ok';
-        if (counts.down && counts.down > (counts.healthy ?? 0)) return 'down';
-        if (counts.degraded) return 'degraded';
-        return 'ok';
-      } catch {
-        return 'ok'; // No health data yet = not an error in session 1
-      }
-    })(),
-  ]);
+      })(),
+    ]);
 
-  const allOk = tmdbOk && anilistOk && jikanOk;
-  const overallStatus = allOk ? 'ok' : 'degraded';
+    const allOk = tmdbOk && anilistOk && jikanOk;
+    const overallStatus = allOk ? 'ok' : 'degraded';
 
-  const payload = {
-    status:   overallStatus,
-    services: {
-      tmdb:      tmdbOk    ? 'ok' : 'down',
-      anilist:   anilistOk ? 'ok' : 'down',
-      jikan:     jikanOk   ? 'ok' : 'down',
-      providers: providerStatus,
-    },
-  };
+    const payload = {
+      status:   overallStatus,
+      services: {
+        tmdb:      tmdbOk    ? 'ok' : 'down',
+        anilist:   anilistOk ? 'ok' : 'down',
+        jikan:     jikanOk   ? 'ok' : 'down',
+        providers: providerStatus,
+      },
+    };
 
-  await kvSet(c.env, cacheKey, payload, TTL.health);
-  return jsonResponse(payload);
+    await kvSet(c.env, cacheKey, payload, TTL.health);
+    return jsonResponse(payload);
+  } catch (err) {
+    console.error('[Health] Error:', err);
+    return jsonResponse({
+      status: 'degraded',
+      services: { tmdb: 'down', anilist: 'down', jikan: 'down', providers: 'ok' },
+    });
+  }
 });
 
 // ─── GET /proxy ───────────────────────────────────────────────────────────────

@@ -22,6 +22,7 @@ import {
   getAnilistAiring,
   getAnilistUpcoming,
   getAnilistSeasonal,
+  getAnilistByGenre,
   getCurrentSeason,
   anilistTitle,
 } from '../metadata/anilist.js';
@@ -147,19 +148,9 @@ async function buildAnimeHome(env: Env): Promise<HomeResponse> {
     getAnilistAiring(1, 20),
     getAnilistUpcoming(1, 10),
     getAnilistSeasonal(season, year, 1, 20),
-    // Genre rows via AniList
-    (async () => {
-      const { getAnilistByGenre } = await import('../metadata/anilist.js');
-      return getAnilistByGenre('Action', 1, 20);
-    })(),
-    (async () => {
-      const { getAnilistByGenre } = await import('../metadata/anilist.js');
-      return getAnilistByGenre('Romance', 1, 20);
-    })(),
-    (async () => {
-      const { getAnilistByGenre } = await import('../metadata/anilist.js');
-      return getAnilistByGenre('Isekai', 1, 20);
-    })(),
+    getAnilistByGenre('Action', 1, 20),
+    getAnilistByGenre('Romance', 1, 20),
+    getAnilistByGenre('Isekai', 1, 20),
   ]);
 
   const [
