@@ -32,7 +32,7 @@ export function tmdbLogo(path: string | null | undefined, size = 'w300'): string
 
 // ─── HTTP helper ──────────────────────────────────────────────────────────────
 
-async function tmdbFetch<T>(
+export async function tmdbFetch<T>(
   env:    Env,
   path:   string,
   params: Record<string, string | number | boolean> = {}
