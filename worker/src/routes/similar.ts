@@ -41,16 +41,26 @@ async function fetchTasteDive(
   url.searchParams.set('q',     query);
   url.searchParams.set('type',  type);
   url.searchParams.set('limit', String(limit));
-  url.searchParams.set('k',     env.TASTEDIVE_API_KEY);
+  
+  if (env.TASTEDIVE_API_KEY) {
+    url.searchParams.set('k', env.TASTEDIVE_API_KEY);
+  }
 
   try {
     const res = await fetch(url.toString(), {
-      headers: { Accept: 'application/json' },
+      headers: { 
+        'Accept': 'application/json',
+        'User-Agent': 'SpunMediaAPI/1.0'
+      },
     });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      console.error(`[TasteDive] Error ${res.status}: ${await res.text()}`);
+      return [];
+    }
     const data = await res.json() as TasteDiveResponse;
     return data?.Similar?.Results ?? [];
-  } catch {
+  } catch (err) {
+    console.error('[TasteDive] Fetch error:', err);
     return [];
   }
 }
@@ -64,9 +74,16 @@ async function tasteDiveToItem(
 ): Promise<ContentItem | null> {
   try {
     const tmdb = await searchTmdb(env, result.Name, 1);
-    const match = tmdb.results.find((r) =>
-      r.media_type === mediaType &&
-      (r.title || r.name || '').toLowerCase() === result.Name.toLowerCase()
+    if (!tmdb.results.length) return null;
+
+    // Try exact match first, then partial, then just first result of correct type
+    const normalizedName = result.Name.toLowerCase().trim();
+    const match = tmdb.results.find((r) => 
+      r.media_type === mediaType && 
+      (r.title || r.name || '').toLowerCase().trim() === normalizedName
+    ) ?? tmdb.results.find((r) => 
+      r.media_type === mediaType && 
+      (r.title || r.name || '').toLowerCase().includes(normalizedName)
     ) ?? tmdb.results.find((r) => r.media_type === mediaType);
 
     if (!match) return null;
@@ -74,7 +91,8 @@ async function tasteDiveToItem(
     const title = match.title || match.name || result.Name;
     const row   = await resolveFromTmdb(env, match.id, mediaType, title);
     return tmdbResultToItem(match, row.spun_id, mediaType);
-  } catch {
+  } catch (err) {
+    console.error(`[TasteDive] Resolution error for ${result.Name}:`, err);
     return null;
   }
 }
@@ -101,7 +119,7 @@ similar.get('/movie/:spunId', async (c) => {
 
   const tasteResults = await fetchTasteDive(
     c.env,
-    `movie:${row.title}`,
+    row.title,
     'movies'
   );
 
@@ -131,7 +149,7 @@ similar.get('/tv/:spunId', async (c) => {
 
   const tasteResults = await fetchTasteDive(
     c.env,
-    `show:${row.title}`,
+    row.title,
     'shows'
   );
 

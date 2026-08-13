@@ -12,7 +12,8 @@ import type { Env } from '../types/env.js';
 async function jikanGet<T>(env: Env, path: string): Promise<T | null> {
   // Strip leading slash so we never get double slashes
   const cleanPath = path.startsWith('/') ? path.slice(1) : path;
-  const url       = `${env.PROXY_BASE_URL}/api/jikan/${cleanPath}`;
+  const baseUrl   = env.PROXY_BASE_URL.replace(/\/$/, '');
+  const url       = `${baseUrl}/api/jikan/${cleanPath}`;
 
   try {
     const res = await fetch(url, {
@@ -28,7 +29,11 @@ async function jikanGet<T>(env: Env, path: string): Promise<T | null> {
       return null;
     }
 
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const text = await res.text();
+      console.error(`[Jikan Proxy] HTTP ${res.status}: ${text.slice(0, 200)}`);
+      return null;
+    }
 
     const json = await res.json() as T;
     return json;

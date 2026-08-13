@@ -21,7 +21,8 @@ async function anilistQuery<T>(
   query:     string,
   variables: Record<string, unknown> = {}
 ): Promise<T | null> {
-  const proxyUrl = `${env.PROXY_BASE_URL}/api/anilist`;
+  const baseUrl = env.PROXY_BASE_URL.replace(/\/$/, '');
+  const proxyUrl = `${baseUrl}/api/anilist`;
 
   try {
     const res = await fetch(proxyUrl, {
@@ -33,11 +34,17 @@ async function anilistQuery<T>(
       },
       body: JSON.stringify({ query, variables }),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const text = await res.text();
+      const msg = `[AniList Proxy] HTTP ${res.status}: ${text.slice(0, 100)}`;
+      console.error(msg);
+      throw new Error(msg);
+    }
     const json = await res.json() as { data?: T; errors?: Array<{ message: string }> };
     if (json.errors?.length) {
-      console.error('[AniList GraphQL Error]', json.errors.map((e) => e.message).join(', '));
-      return null;
+      const msg = `[AniList GraphQL Error] ${json.errors.map((e) => e.message).join(', ')}`;
+      console.error(msg);
+      throw new Error(msg);
     }
     return json.data ?? null;
   } catch (err) {
@@ -59,7 +66,7 @@ const MEDIA_FIELDS = `
   bannerImage
   averageScore
   genres
-  tags(sort: POPULARITY_DESC) { name isMediaSpoiler rank }
+  tags(sort: RANK_DESC) { name isMediaSpoiler rank }
   startDate { year month day }
   description(asHtml: false)
   studios(isMain: true) { nodes { name isAnimationStudio } }
