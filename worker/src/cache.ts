@@ -26,7 +26,7 @@ export const TTL = {
 // ─── Cache Version ─────────────────────────────────────────────────────────
 
 // Increment this version (e.g., 'v1' -> 'v2') to force clear all cache keys.
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v2';
 
 // ─── Key builders ─────────────────────────────────────────────────────────────
 
