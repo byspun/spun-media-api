@@ -23,6 +23,11 @@ export const TTL = {
   health:           60,          // 1m   — health check results
 } as const;
 
+// ─── Cache Version ─────────────────────────────────────────────────────────
+
+// Increment this version (e.g., 'v1' -> 'v2') to force clear all cache keys.
+const CACHE_VERSION = 'v1';
+
 // ─── Key builders ─────────────────────────────────────────────────────────────
 
 export const CacheKeys = {
@@ -68,7 +73,8 @@ export const CacheKeys = {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 export async function kvGet<T>(env: Env, key: string): Promise<T | null> {
-  const val = await env.MEDIA_CACHE.get(key, 'text');
+  const fullKey = `${CACHE_VERSION}:${key}`;
+  const val = await env.MEDIA_CACHE.get(fullKey, 'text');
   if (!val) return null;
   try {
     return JSON.parse(val) as T;
@@ -83,11 +89,13 @@ export async function kvSet(
   value: unknown,
   ttlSeconds: number
 ): Promise<void> {
-  await env.MEDIA_CACHE.put(key, JSON.stringify(value), {
+  const fullKey = `${CACHE_VERSION}:${key}`;
+  await env.MEDIA_CACHE.put(fullKey, JSON.stringify(value), {
     expirationTtl: ttlSeconds,
   });
 }
 
 export async function kvDel(env: Env, key: string): Promise<void> {
-  await env.MEDIA_CACHE.delete(key);
+  const fullKey = `${CACHE_VERSION}:${key}`;
+  await env.MEDIA_CACHE.delete(fullKey);
 }
