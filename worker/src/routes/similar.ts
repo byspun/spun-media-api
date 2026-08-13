@@ -159,7 +159,7 @@ similar.get('/anime/:spunId', async (c) => {
     return errorResponse('INVALID_TYPE', 'This endpoint is for anime only.', 400);
   }
 
-  const media = await getAnilistMedia(row.anilist_id);
+  const media = await getAnilistMedia(c.env, row.anilist_id);
   if (!media) return errorResponse('UPSTREAM_ERROR', 'Could not fetch metadata.', 502);
 
   const recNodes = (media.recommendations?.nodes ?? []).slice(0, 20);

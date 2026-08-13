@@ -85,7 +85,7 @@ discover.get('/trending', async (c) => {
   let results: ContentItem[] = [];
 
   if (rawType === 'anime') {
-    const media = await getAnilistTrending(page);
+    const media = await getAnilistTrending(c.env, page);
     results = await Promise.all(
       media.map(async (m) => {
         const title = anilistTitle(m);
@@ -106,7 +106,7 @@ discover.get('/trending', async (c) => {
     // All — fan-out TMDB + AniList
     const [tmdbRaw, animeMedia] = await Promise.all([
       getTmdbTrending(c.env, 'all', page),
-      getAnilistTrending(page, 10),
+      getAnilistTrending(c.env, page, 10),
     ]);
     const [tmdbItems, animeItems] = await Promise.all([
       Promise.all(
@@ -148,7 +148,7 @@ discover.get('/popular', async (c) => {
   let results: ContentItem[] = [];
 
   if (rawType === 'anime') {
-    const media = await getAnilistPopular(page);
+    const media = await getAnilistPopular(c.env, page);
     results = await Promise.all(
       media.map(async (m) => {
         const title = anilistTitle(m);
@@ -186,7 +186,7 @@ discover.get('/new', async (c) => {
   let results: ContentItem[] = [];
 
   if (rawType === 'anime') {
-    const media = await getAnilistTrending(page);
+    const media = await getAnilistTrending(c.env, page);
     const recent = media.filter((m) =>
       m.startDate?.year && m.startDate.year >= currentYear - 1
     );
@@ -300,7 +300,7 @@ discover.get('/studio/:studioId', async (c) => {
 
     const anilistStudioId = parseInt(studio.query_value);
     const { media, works_count, hasNextPage } = await getAnilistStudioWorks(
-      anilistStudioId, page
+      c.env, anilistStudioId, page
     );
 
     results = await Promise.all(
@@ -374,7 +374,7 @@ discover.get('/:type', async (c) => {
       const anilistGenre = genreDef.anilist_genres?.[0];
       if (!anilistGenre) return errorResponse('INVALID_GENRE', 'Genre not available for anime.', 400);
 
-      const media = await getAnilistByGenre(anilistGenre, page);
+      const media = await getAnilistByGenre(c.env, anilistGenre, page);
       const items = await Promise.all(
         media.map(async (m) => {
           const title = anilistTitle(m);
@@ -385,7 +385,7 @@ discover.get('/:type', async (c) => {
       results = items;
       hasMore = media.length === 30;
     } else {
-      const media = await getAnilistPopular(page);
+      const media = await getAnilistPopular(c.env, page);
       const items = await Promise.all(
         media.map(async (m) => {
           const title = anilistTitle(m);

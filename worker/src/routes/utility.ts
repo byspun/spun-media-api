@@ -75,15 +75,18 @@ utility.get('/health', async (c) => {
         headers: { Authorization: `Bearer ${c.env.TMDB_BEARER_TOKEN}` },
       }).then((r) => r.ok).catch(() => false),
 
-      fetch('https://graphql.anilist.co', {
+      fetch(`${c.env.PROXY_BASE_URL}/api/anilist`, {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ query: '{ Page(page:1,perPage:1) { media(type:ANIME) { id } } }' }),
+        headers: {
+          'Content-Type':        'application/json',
+          'x-spun-proxy-secret': c.env.SPUN_PROXY_SECRET ?? '',
+        },
+        body: JSON.stringify({ query: '{ Page(page:1,perPage:1) { media(type:ANIME) { id } } }' }),
       }).then((r) => r.ok).catch(() => false),
 
-      fetch('https://api.jikan.moe/v4/anime/1')
-        .then((r) => r.ok)
-        .catch(() => false),
+      fetch(`${c.env.PROXY_BASE_URL}/api/jikan/anime/1`, {
+        headers: { 'x-spun-proxy-secret': c.env.SPUN_PROXY_SECRET ?? '' },
+      }).then((r) => r.ok).catch(() => false),
 
       (async (): Promise<string> => {
         try {

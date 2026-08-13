@@ -21,7 +21,7 @@ import {
   extractYear,
 } from '../metadata/tmdb.js';
 import { getAnilistMedia, anilistTitle } from '../metadata/anilist.js';
-import { getAllJikanEpisodes } from '../metadata/jikan.js';
+import { getJikanEpisodes } from '../metadata/jikan.js';
 import {
   normalizeMovieInfo,
   normalizeTvInfo,
@@ -65,7 +65,7 @@ info.get('/:spunId', async (c) => {
     payload = normalizeTvInfo(spunId, tv);
 
   } else if (row.content_type === 'anime' && row.anilist_id) {
-    const media = await getAnilistMedia(row.anilist_id);
+    const media = await getAnilistMedia(c.env, row.anilist_id);
     if (!media) return errorResponse('UPSTREAM_ERROR', 'Could not fetch metadata.', 502);
 
     // Back-fill MAL ID if we now have it
@@ -139,7 +139,7 @@ info.get('/:spunId/episodes', async (c) => {
   }
 
   if (row.content_type === 'anime' && row.anilist_id) {
-    const media = await getAnilistMedia(row.anilist_id);
+    const media = await getAnilistMedia(c.env, row.anilist_id);
     if (!media) return errorResponse('UPSTREAM_ERROR', 'Could not fetch metadata.', 502);
 
     const malId = media.idMal ?? row.mal_id;
@@ -167,7 +167,7 @@ info.get('/:spunId/episodes', async (c) => {
     }
 
     // Fetch full episode list from Jikan
-    const episodes   = await getAllJikanEpisodes(malId);
+    const episodes   = await getJikanEpisodes(c.env, malId);
     const isAiring   = media.status === 'RELEASING';
 
     // For airing shows, only include aired episodes
@@ -237,7 +237,7 @@ info.get('/:spunId/cast', async (c) => {
   }
 
   if (row.content_type === 'anime' && row.anilist_id) {
-    const media = await getAnilistMedia(row.anilist_id);
+    const media = await getAnilistMedia(c.env, row.anilist_id);
     if (media) {
       cast = (media.characters?.edges ?? [])
         .slice(0, 50)
@@ -303,7 +303,7 @@ info.get('/:spunId/related', async (c) => {
   }
 
   if (row.content_type === 'anime' && row.anilist_id) {
-    const media = await getAnilistMedia(row.anilist_id);
+    const media = await getAnilistMedia(c.env, row.anilist_id);
     if (media) {
       // Relations (sequels, prequels, etc.)
       const relationEdges = (media.relations?.edges ?? [])

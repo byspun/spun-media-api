@@ -78,7 +78,7 @@ anime.get('/seasons', async (c) => {
   const cached   = await kvGet(c.env, cacheKey);
   if (cached) return jsonResponse(cached);
 
-  const seasons = await getAnilistSeasonsList();
+  const seasons = await getAnilistSeasonsList(c.env);
   const payload = { seasons };
   await kvSet(c.env, cacheKey, payload, TTL.animeSchedule);
   return jsonResponse(payload);
@@ -99,7 +99,7 @@ anime.get('/seasons/:year/:season', async (c) => {
   const cached   = await kvGet(c.env, cacheKey);
   if (cached) return jsonResponse(cached);
 
-  const media   = await getAnilistSeasonal(season, year, page);
+  const media   = await getAnilistSeasonal(c.env, season, year, page);
   const results = await toItems(c.env, media);
   const payload = { year, season: season.toLowerCase(), page, has_more: media.length >= 30, results };
   await kvSet(c.env, cacheKey, payload, TTL.animeSchedule);
@@ -113,7 +113,7 @@ anime.get('/schedule', async (c) => {
   const cached   = await kvGet(c.env, cacheKey);
   if (cached) return jsonResponse(cached);
 
-  const airing = await getAnilistAiring(1, 50);
+  const airing = await getAnilistAiring(c.env, 1, 50);
 
   const entries: (AiringEntry | null)[] = await Promise.all(
     airing.map(async (m) => {
@@ -151,7 +151,7 @@ anime.get('/rankings/alltime', async (c) => {
   const cached   = await kvGet(c.env, cacheKey);
   if (cached) return jsonResponse(cached);
 
-  const media = await getAnilistRankingsAlltime(page);
+  const media = await getAnilistRankingsAlltime(c.env, page);
   const results: RankedItem[] = await Promise.all(
     media.map(async (m, i) => {
       const title = anilistTitle(m);
@@ -173,7 +173,7 @@ anime.get('/rankings/popular', async (c) => {
   const cached   = await kvGet(c.env, cacheKey);
   if (cached) return jsonResponse(cached);
 
-  const media = await getAnilistRankingsPopular(page);
+  const media = await getAnilistRankingsPopular(c.env, page);
   const results: RankedItem[] = await Promise.all(
     media.map(async (m, i) => {
       const title = anilistTitle(m);
@@ -197,7 +197,7 @@ anime.get('/rankings/season/:year/:season', async (c) => {
   const cached   = await kvGet(c.env, cacheKey);
   if (cached) return jsonResponse(cached);
 
-  const media = await getAnilistRankingsSeason(year, season, page);
+  const media = await getAnilistRankingsSeason(c.env, year, season, page);
   const results: RankedItem[] = await Promise.all(
     media.map(async (m, i) => {
       const title = anilistTitle(m);
@@ -224,7 +224,7 @@ anime.get('/rankings/genre/:genre', async (c) => {
   const cached   = await kvGet(c.env, cacheKey);
   if (cached) return jsonResponse(cached);
 
-  const media = await getAnilistRankingsGenre(genreDef.anilist_genres[0], page);
+  const media = await getAnilistRankingsGenre(c.env, genreDef.anilist_genres[0], page);
   const results: RankedItem[] = await Promise.all(
     media.map(async (m, i) => {
       const title = anilistTitle(m);
@@ -246,7 +246,7 @@ anime.get('/airing', async (c) => {
   const cached   = await kvGet(c.env, cacheKey);
   if (cached) return jsonResponse(cached);
 
-  const media   = await getAnilistAiring(page);
+  const media   = await getAnilistAiring(c.env, page);
   const results = await toItems(c.env, media);
   const payload = { page, has_more: media.length >= 30, results };
   await kvSet(c.env, cacheKey, payload, TTL.animeSchedule);
@@ -261,7 +261,7 @@ anime.get('/upcoming', async (c) => {
   const cached   = await kvGet(c.env, cacheKey);
   if (cached) return jsonResponse(cached);
 
-  const media   = await getAnilistUpcoming(page);
+  const media   = await getAnilistUpcoming(c.env, page);
   const results = await toItems(c.env, media);
   const payload = { page, has_more: media.length >= 20, results };
   await kvSet(c.env, cacheKey, payload, TTL.animeSchedule);
@@ -277,7 +277,7 @@ anime.get('/format/:format', async (c) => {
   const cached   = await kvGet(c.env, cacheKey);
   if (cached) return jsonResponse(cached);
 
-  const { media, total, hasNextPage } = await getAnilistByFormat(format, page);
+  const { media, total, hasNextPage } = await getAnilistByFormat(c.env, format, page);
   const results = await toItems(c.env, media);
   const payload = { format, page, total, has_more: hasNextPage, results };
   await kvSet(c.env, cacheKey, payload, TTL.discover);
@@ -293,7 +293,7 @@ anime.get('/demographic/:demographic', async (c) => {
   const cached      = await kvGet(c.env, cacheKey);
   if (cached) return jsonResponse(cached);
 
-  const { media, total, hasNextPage } = await getAnilistByDemographic(demographic, page);
+  const { media, total, hasNextPage } = await getAnilistByDemographic(c.env, demographic, page);
   const results = await toItems(c.env, media);
   const payload = { demographic, page, total, has_more: hasNextPage, results };
   await kvSet(c.env, cacheKey, payload, TTL.discover);
@@ -309,7 +309,7 @@ anime.get('/source/:source', async (c) => {
   const cached   = await kvGet(c.env, cacheKey);
   if (cached) return jsonResponse(cached);
 
-  const { media, total, hasNextPage } = await getAnilistBySource(source, page);
+  const { media, total, hasNextPage } = await getAnilistBySource(c.env, source, page);
   const results = await toItems(c.env, media);
   const payload = { source, page, total, has_more: hasNextPage, results };
   await kvSet(c.env, cacheKey, payload, TTL.discover);
@@ -329,7 +329,7 @@ anime.get('/genre/:genre', async (c) => {
   const cached   = await kvGet(c.env, cacheKey);
   if (cached) return jsonResponse(cached);
 
-  const media   = await getAnilistByGenre(genreDef.anilist_genres[0], page);
+  const media   = await getAnilistByGenre(c.env, genreDef.anilist_genres[0], page);
   const results = await toItems(c.env, media);
   const payload = { genre: genreId, page, has_more: media.length >= 30, results };
   await kvSet(c.env, cacheKey, payload, TTL.discover);
@@ -345,7 +345,7 @@ anime.get('/studios', async (c) => {
   const cached   = await kvGet(c.env, cacheKey);
   if (cached) return jsonResponse(cached);
 
-  const { studios, hasNextPage } = await getAnilistStudios(q, page);
+  const { studios, hasNextPage } = await getAnilistStudios(c.env, q, page);
   const payload = { page, has_more: hasNextPage, studios };
   await kvSet(c.env, cacheKey, payload, TTL.studio);
   return jsonResponse(payload);
@@ -362,7 +362,7 @@ anime.get('/studio/:studioId', async (c) => {
   const cached   = await kvGet(c.env, cacheKey);
   if (cached) return jsonResponse(cached);
 
-  const { name, works_count, media, hasNextPage } = await getAnilistStudioWorks(studioId, page);
+  const { name, works_count, media, hasNextPage } = await getAnilistStudioWorks(c.env, studioId, page);
   const results = await toItems(c.env, media);
   const payload = {
     studio:      { id: studioId, name },
@@ -392,9 +392,9 @@ anime.get('/:spunId/themes', async (c) => {
   if (!malId) {
     // Try to get it from AniList
     if (row.anilist_id) {
-      const media = await getAnilistMedia(row.anilist_id);
+      const media = await getAnilistMedia(c.env, row.anilist_id);
       if (media?.idMal) {
-        const themes = await getJikanThemes(media.idMal);
+        const themes = await getJikanThemes(c.env, media.idMal);
         const payload = { spun_id: spunId, themes };
         await kvSet(c.env, cacheKey, payload, TTL.metadata);
         return jsonResponse(payload);
@@ -403,7 +403,7 @@ anime.get('/:spunId/themes', async (c) => {
     return jsonResponse({ spun_id: spunId, themes: [] });
   }
 
-  const themes  = await getJikanThemes(malId);
+  const themes  = await getJikanThemes(c.env, malId);
   const payload = { spun_id: spunId, themes };
   await kvSet(c.env, cacheKey, payload, TTL.metadata);
   return jsonResponse(payload);
@@ -425,14 +425,15 @@ anime.get('/:spunId/fillers', async (c) => {
 
   let malId = row.mal_id;
   if (!malId && row.anilist_id) {
-    const media = await getAnilistMedia(row.anilist_id);
+    const media = await getAnilistMedia(c.env, row.anilist_id);
     malId = media?.idMal ?? null;
   }
 
   if (!malId) return jsonResponse({ spun_id: spunId, fillers: [], has_more: false });
 
-  const { fillers, hasNextPage } = await getJikanFillers(malId, page);
-  const payload = { spun_id: spunId, page, has_more: hasNextPage, fillers };
+  const allFillers = await getJikanFillers(c.env, malId);
+  // JikanFillers isn't paginated in the proxy yet, return all
+  const payload = { spun_id: spunId, page, has_more: false, fillers: allFillers };
   await kvSet(c.env, cacheKey, payload, TTL.metadata);
   return jsonResponse(payload);
 });
@@ -447,7 +448,7 @@ anime.get('/:spunId/franchise', async (c) => {
     return errorResponse('NOT_FOUND', 'Anime not found.', 404);
   }
 
-  const media = await getAnilistMedia(row.anilist_id);
+  const media = await getAnilistMedia(c.env, row.anilist_id);
   if (!media) return errorResponse('UPSTREAM_ERROR', 'Could not fetch metadata.', 502);
 
   const relationEdges = (media.relations?.edges ?? [])
@@ -485,7 +486,7 @@ anime.get('/:spunId/characters', async (c) => {
     return errorResponse('NOT_FOUND', 'Anime not found.', 404);
   }
 
-  const media = await getAnilistMedia(row.anilist_id);
+  const media = await getAnilistMedia(c.env, row.anilist_id);
   if (!media) return errorResponse('UPSTREAM_ERROR', 'Could not fetch metadata.', 502);
 
   const characters = (media.characters?.edges ?? []).map((edge: any) => {

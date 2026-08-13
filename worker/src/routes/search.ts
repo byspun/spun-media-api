@@ -30,7 +30,7 @@ async function isAnime(
   const cached   = await kvGet<boolean>(env, cacheKey);
   if (cached !== null) return cached;
 
-  const match = await isAnimeOnAnilist(title);
+  const match = await isAnimeOnAnilist(env, title);
   const result = match !== null;
   await kvSet(env, cacheKey, result, TTL.search);
   return result;
@@ -102,7 +102,7 @@ search.get('/', async (c) => {
 
   if (normalizedType === 'anime') {
     // AniList only
-    const { media, hasNextPage } = await searchAnilist(q, page, 20);
+    const { media, hasNextPage } = await searchAnilist(c.env, q, page, 20);
     const items = await Promise.all(media.map((m) => anilistToItemWithId(c.env, m)));
     results      = items;
     totalPages   = hasNextPage ? page + 1 : page;
@@ -130,7 +130,7 @@ search.get('/', async (c) => {
     // All — fan-out TMDB + AniList in parallel
     const [tmdb, anilistResult] = await Promise.all([
       searchTmdb(c.env, q, page),
-      searchAnilist(q, page, 10),
+      searchAnilist(c.env, q, page, 10),
     ]);
 
     // Filter TMDB: remove anime entries (they come from AniList instead)
@@ -178,7 +178,7 @@ search.get('/suggestions', async (c) => {
   // Fan-out: 5 from TMDB, 5 from AniList
   const [tmdb, anilistResult] = await Promise.all([
     searchTmdb(c.env, q, 1),
-    searchAnilist(q, 1, 5),
+    searchAnilist(c.env, q, 1, 5),
   ]);
 
   const noAnime = await filterOutAnime(c.env, tmdb.results.slice(0, 10) as any[]);
@@ -253,7 +253,7 @@ search.get('/anime', async (c) => {
   const cached   = await kvGet(c.env, cacheKey);
   if (cached) return jsonResponse(cached);
 
-  const { media, hasNextPage } = await searchAnilist(q, page, 20);
+  const { media, hasNextPage } = await searchAnilist(c.env, q, page, 20);
   const items = await Promise.all(media.map((m) => anilistToItemWithId(c.env, m)));
 
   const payload = { page, total_pages: hasNextPage ? page + 1 : page, total_results: items.length, results: items };
