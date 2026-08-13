@@ -43,7 +43,7 @@ app.use('*', async (c, next) => {
 app.use('/v1/internal/*', async (c, next) => {
   const secret = c.req.header('X-Spun-Secret');
   if (!secret || secret !== c.env.X_SPUN_SECRET) {
-    return errorResponse('INTERNAL_ERROR', 'Unauthorized', 401);
+    return errorResponse('UNAUTHORIZED', 'Unauthorized', 401);
   }
   await next();
 });
@@ -116,7 +116,7 @@ app.get('/', (c) => {
 // ─── 404 ──────────────────────────────────────────────────────────────────────
 
 app.notFound((c) => {
-  return errorResponse('INVALID_ID', `Route ${c.req.path} not found.`, 404);
+  return errorResponse('ROUTE_NOT_FOUND', `Route ${c.req.path} not found.`, 404);
 });
 
 // ─── Error handler ────────────────────────────────────────────────────────────

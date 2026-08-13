@@ -397,6 +397,8 @@ export function errorResponse(
   if (code === 'INVALID_GENRE')      mappedCode = 'INVALID_ID';
   if (code === 'INVALID_STUDIO')     mappedCode = 'INVALID_ID';
   if (code === 'INVALID_URL')        mappedCode = 'INVALID_ID';
+  if (code === 'MISSING_URL')        mappedCode = 'BAD_REQUEST';
+  if (code === 'FORBIDDEN_HOST')     mappedCode = 'FORBIDDEN';
   if (code === 'MISSING_EXTERNAL_ID') mappedCode = 'INTERNAL_ERROR';
 
   const detail = getError(mappedCode);
