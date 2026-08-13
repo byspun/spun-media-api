@@ -22,6 +22,7 @@ import {
 } from './metadata/anilist.js';
 
 import { GENRES } from './config/genres.js';
+import { getError } from './shared/errors.js';
 
 import type {
   ContentItem,
@@ -375,13 +376,33 @@ export function anilistToItem(
 
 // ─── Standard JSON error response ────────────────────────────────────────────
 
+/**
+ * Standard Spün Media API error response.
+ * Maps internal codes to the public-facing abstracted error system.
+ */
 export function errorResponse(
   code:    string,
-  message: string,
+  message: string, // Kept for backward compatibility but ignored if code matches registry
   status:  number
 ): Response {
+  // Map old internal codes to new outcome-based codes
+  let mappedCode = code;
+  if (code === 'NOT_FOUND')          mappedCode = 'INVALID_ID';
+  if (code === 'UPSTREAM_ERROR')     mappedCode = 'SERVICE_OFFLINE';
+  if (code === 'SUBDL_ERROR')        mappedCode = 'SERVICE_OFFLINE';
+  if (code === 'BACKEND_ERROR')      mappedCode = 'SERVICE_OFFLINE';
+  if (code === 'FETCH_ERROR')        mappedCode = 'SERVICE_OFFLINE';
+  if (code === 'INVALID_TYPE')       mappedCode = 'INVALID_ID';
+  if (code === 'INVALID_SEASON')     mappedCode = 'INVALID_ID';
+  if (code === 'INVALID_GENRE')      mappedCode = 'INVALID_ID';
+  if (code === 'INVALID_STUDIO')     mappedCode = 'INVALID_ID';
+  if (code === 'INVALID_URL')        mappedCode = 'INVALID_ID';
+  if (code === 'MISSING_EXTERNAL_ID') mappedCode = 'INTERNAL_ERROR';
+
+  const detail = getError(mappedCode);
+
   return new Response(
-    JSON.stringify({ error: { code, message } }),
+    JSON.stringify({ error: detail }),
     {
       status,
       headers: { 'Content-Type': 'application/json' },

@@ -5,6 +5,7 @@
 import { Hono }   from 'hono';
 import { cors }   from 'hono/cors';
 import type { Env } from './types/env.js';
+import { errorResponse } from './normalizer.js';
 
 import searchRoute    from './routes/search.js';
 import infoRoute      from './routes/info.js';
@@ -42,7 +43,7 @@ app.use('*', async (c, next) => {
 app.use('/v1/internal/*', async (c, next) => {
   const secret = c.req.header('X-Spun-Secret');
   if (!secret || secret !== c.env.X_SPUN_SECRET) {
-    return c.json({ error: { code: 'UNAUTHORIZED', message: 'Invalid secret.' } }, 401);
+    return errorResponse('INTERNAL_ERROR', 'Unauthorized', 401);
   }
   await next();
 });
@@ -115,20 +116,14 @@ app.get('/', (c) => {
 // ─── 404 ──────────────────────────────────────────────────────────────────────
 
 app.notFound((c) => {
-  return c.json(
-    { error: { code: 'NOT_FOUND', message: `Route ${c.req.path} not found.` } },
-    404
-  );
+  return errorResponse('INVALID_ID', `Route ${c.req.path} not found.`, 404);
 });
 
 // ─── Error handler ────────────────────────────────────────────────────────────
 
 app.onError((err, c) => {
   console.error('[Worker Error]', err.message, err.stack);
-  return c.json(
-    { error: { code: 'INTERNAL_ERROR', message: 'An unexpected error occurred.' } },
-    500
-  );
+  return errorResponse('INTERNAL_ERROR', 'Unexpected error', 500);
 });
 
 export default app;
