@@ -33,7 +33,7 @@ interface TasteDiveResponse {
 
 async function fetchTasteDive(
   env:    Env,
-  query:  string,        // e.g. "movie:Inception" or "show:Breaking Bad"
+  query:  string,
   type:   'movies' | 'shows',
   limit   = 20
 ): Promise<TasteDiveResult[]> {
@@ -41,6 +41,7 @@ async function fetchTasteDive(
   url.searchParams.set('q',     query);
   url.searchParams.set('type',  type);
   url.searchParams.set('limit', String(limit));
+  url.searchParams.set('info',  '1'); // Request more detailed info (often helps)
   
   if (env.TASTEDIVE_API_KEY) {
     url.searchParams.set('k', env.TASTEDIVE_API_KEY);
@@ -54,10 +55,16 @@ async function fetchTasteDive(
       },
     });
     if (!res.ok) {
-      console.error(`[TasteDive] Error ${res.status}: ${await res.text()}`);
+      const errorText = await res.text();
+      console.error(`[TasteDive] Error ${res.status}: ${errorText.slice(0, 100)}`);
       return [];
     }
     const data = await res.json() as TasteDiveResponse;
+    
+    if (!data?.Similar?.Results?.length) {
+      console.warn(`[TasteDive] No results for query: ${query} (${type})`);
+    }
+
     return data?.Similar?.Results ?? [];
   } catch (err) {
     console.error('[TasteDive] Fetch error:', err);
@@ -134,7 +141,14 @@ similar.get('/movie/:spunId', async (c) => {
   if (results.length === 0 && row.tmdb_id) {
     const tmdbRecs = await tmdbFetch<{ results: any[] }>(c.env, `/movie/${row.tmdb_id}/recommendations`);
     if (tmdbRecs?.results?.length) {
-      results = tmdbRecs.results.slice(0, 20).map(r => tmdbResultToItem(r, `movie-${r.id}`, 'movie'));
+      const resolvedItems = await Promise.all(
+        tmdbRecs.results.slice(0, 20).map(async (r) => {
+          const title = r.title || r.original_title || '';
+          const resolved = await resolveFromTmdb(c.env, r.id, 'movie', title);
+          return tmdbResultToItem(r, resolved.spun_id, 'movie');
+        })
+      );
+      results = resolvedItems;
       source  = 'tmdb';
     }
   }
@@ -175,7 +189,14 @@ similar.get('/tv/:spunId', async (c) => {
   if (results.length === 0 && row.tmdb_id) {
     const tmdbRecs = await tmdbFetch<{ results: any[] }>(c.env, `/tv/${row.tmdb_id}/recommendations`);
     if (tmdbRecs?.results?.length) {
-      results = tmdbRecs.results.slice(0, 20).map(r => tmdbResultToItem(r, `tv-${r.id}`, 'tv'));
+      const resolvedItems = await Promise.all(
+        tmdbRecs.results.slice(0, 20).map(async (r) => {
+          const title = r.name || r.original_name || '';
+          const resolved = await resolveFromTmdb(c.env, r.id, 'tv', title);
+          return tmdbResultToItem(r, resolved.spun_id, 'tv');
+        })
+      );
+      results = resolvedItems;
       source  = 'tmdb';
     }
   }
