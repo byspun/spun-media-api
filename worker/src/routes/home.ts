@@ -1,28 +1,37 @@
 // worker/src/routes/home.ts
 // Homepage endpoints:
-//   GET /home          — combined snapshot (movies + TV + anime)
-//   GET /home/movie    — movie homepage
-//   GET /home/tv       — TV homepage
-//   GET /home/anime    — anime homepage
+//   GET /home          — general (all types mixed) — 23 rows + hero
+//   GET /home/movie    — movie-specific             — 24 rows + hero
+//   GET /home/tv       — TV-specific                — 23 rows + hero
+//   GET /home/anime    — anime-specific             — 27 rows + hero
 //
-// Each returns { hero: ContentItem[], rows: HomeRow[] }
-// Built from parallel metadata calls, cached for 24h.
+// All return: { hero: ContentItem[], rows: HomeRow[] }
+// Cached in KV for 30 minutes.
+//
+// Franchise rows: curated configs, no item count cap.
+// Algorithmic rows: clamped to 10–30 items.
+// Hero: 5–7 items, manual override fills first, algorithmic fills remaining.
 
-import { Hono } from 'hono';
-import type { Env } from '../types/env.js';
-import type { ContentItem, HomeRow, HomeResponse } from '../types/index.js';
+import { Hono }        from 'hono';
+import type { Env }    from '../types/env.js';
+import type { ContentItem } from '../types/index.js';
 import { kvGet, kvSet, CacheKeys, TTL } from '../cache.js';
 import {
   getTmdbTrending,
   tmdbDiscover,
-  tmdbPoster,
 } from '../metadata/tmdb.js';
 import {
   getAnilistTrending,
   getAnilistAiring,
-  getAnilistUpcoming,
+  getAnilistNextSeason,
   getAnilistSeasonal,
   getAnilistByGenre,
+  getAnilistByTag,
+  getAnilistFiltered,
+  getAnilistStudioWorks,
+  getAnilistSeasonTopScored,
+  getAnilistRankingsAlltime,
+  getAnilistRankingsPopular,
   getCurrentSeason,
   anilistTitle,
 } from '../metadata/anilist.js';
@@ -30,158 +39,678 @@ import { resolveFromTmdb, resolveFromAnilist } from '../identity/resolver.js';
 import { tmdbResultToItem, anilistToItem, jsonResponse } from '../normalizer.js';
 import { getDb } from '../db.js';
 
+// Config imports
+import { homeHero }   from '../config/hero/home.js';
+import { movieHero }  from '../config/hero/movie.js';
+import { tvHero }     from '../config/hero/tv.js';
+import { animeHero }  from '../config/hero/anime.js';
+import {
+  mcu, dceu, dcu, fastFurious, missionImpossible, jamesBond,
+  marvelTv, starWars, attackOnTitan, fateUniverse, shounenBigThree,
+  dragonBall, monogatari, gundam, typeMoon,
+} from '../config/franchises/index.js';
+import type { FranchiseEntry } from '../config/types.js';
+
 const home = new Hono<{ Bindings: Env }>();
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Constants ────────────────────────────────────────────────────────────────
 
-async function tmdbListToItems(
+const ROW_MIN  = 10;
+const ROW_MAX  = 30;
+const HERO_MAX = 7;
+const HERO_MIN = 5;
+
+// ─── Shared converters ────────────────────────────────────────────────────────
+
+async function tmdbToItems(
   env:  Env,
-  raw:  Array<{ id: number; title?: string; name?: string; media_type?: string; [key: string]: any }>,
-  type: 'movie' | 'tv'
+  raw:  Array<Record<string, any>>,
+  type: 'movie' | 'tv',
+  limit = ROW_MAX
 ): Promise<ContentItem[]> {
-  return Promise.all(
-    raw.slice(0, 20).map(async (r) => {
+  const slice = raw.slice(0, limit);
+  const items = await Promise.allSettled(
+    slice.map(async (r) => {
       const title = r.title || r.name || '';
       const row   = await resolveFromTmdb(env, r.id, type, title);
       return tmdbResultToItem(r, row.spun_id, type);
     })
   );
+  return items
+    .filter((r): r is PromiseFulfilledResult<ContentItem> => r.status === 'fulfilled')
+    .map((r) => r.value)
+    .slice(0, ROW_MAX);
 }
 
-async function anilistListToItems(
+async function anilistToItems(
   env:   Env,
-  media: Array<any>
+  media: Array<Record<string, any>>,
+  limit = ROW_MAX
 ): Promise<ContentItem[]> {
-  return Promise.all(
-    media.slice(0, 20).map(async (m) => {
+  const slice = media.slice(0, limit);
+  const items = await Promise.allSettled(
+    slice.map(async (m) => {
       const title = anilistTitle(m);
       const row   = await resolveFromAnilist(env, m.id, title, { malId: m.idMal ?? undefined });
       return anilistToItem(m, row.spun_id);
     })
   );
+  return items
+    .filter((r): r is PromiseFulfilledResult<ContentItem> => r.status === 'fulfilled')
+    .map((r) => r.value)
+    .slice(0, ROW_MAX);
 }
 
-// ─── Movie homepage ───────────────────────────────────────────────────────────
+// ─── Franchise row builder ────────────────────────────────────────────────────
+// Fetches the ContentItem for each franchise entry in parallel.
+// No item count cap — returns the full curated list.
 
-async function buildMovieHome(env: Env): Promise<HomeResponse> {
-  const currentYear = new Date().getFullYear();
+async function franchiseRow(
+  env:     Env,
+  id:      string,
+  title:   string,
+  entries: FranchiseEntry[]
+): Promise<{ id: string; title: string; items: ContentItem[] }> {
+  const sorted = [...entries].sort((a, b) => a.order - b.order);
+  // Skip unfilled placeholders
+  const filled = sorted.filter((e) => !e.spun_id.includes('xxxxxx'));
 
-  const [trending, popular, topRated, action, horror, scifi, newReleases] = await Promise.all([
+  const results = await Promise.allSettled(
+    filled.map(async (e) => {
+      const { getBySpunId } = await import('../identity/resolver.js');
+      const row = await getBySpunId(env, e.spun_id);
+      if (!row) return null;
+
+      // Build a minimal ContentItem from the DB row without a full metadata fetch
+      return {
+        spun_id: e.spun_id,
+        type:    row.content_type as 'movie' | 'tv' | 'anime',
+        title:   row.title       ?? '',
+        year:    row.year        ?? null,
+        rating:  row.rating      ?? null,
+        poster:  row.poster_path ?? null,
+      } satisfies ContentItem;
+    })
+  );
+
+  const items = results
+    .filter((r): r is PromiseFulfilledResult<ContentItem | null> =>
+      r.status === 'fulfilled' && r.value !== null
+    )
+    .map((r) => r.value!);
+
+  return { id, title, items };
+}
+
+// ─── Hero assembly ────────────────────────────────────────────────────────────
+// Fills override items first, then algorithmic pool, up to HERO_MAX (7).
+
+async function buildHero(
+  env:             Env,
+  overrides:       Array<{ spun_id: string; note: string | null }>,
+  pool:            ContentItem[]
+): Promise<ContentItem[]> {
+  const hero: ContentItem[] = [];
+  const seen  = new Set<string>();
+
+  // 1. Manual overrides — fetch from DB
+  if (overrides.length) {
+    const { getBySpunId } = await import('../identity/resolver.js');
+    for (const o of overrides) {
+      if (hero.length >= HERO_MAX) break;
+      if (seen.has(o.spun_id)) continue;
+      try {
+        const row = await getBySpunId(env, o.spun_id);
+        if (row) {
+          hero.push({
+            spun_id: o.spun_id,
+            type:    row.content_type as 'movie' | 'tv' | 'anime',
+            title:   row.title       ?? '',
+            year:    row.year        ?? null,
+            rating:  row.rating      ?? null,
+            poster:  row.poster_path ?? null,
+          });
+          seen.add(o.spun_id);
+        }
+      } catch { /* skip on error */ }
+    }
+  }
+
+  // 2. Algorithmic pool — quality gate: rating ≥ 7.5 and poster available
+  for (const item of pool) {
+    if (hero.length >= HERO_MAX) break;
+    if (seen.has(item.spun_id)) continue;
+    if ((item.rating ?? 0) >= 7.5 && item.poster) {
+      hero.push(item);
+      seen.add(item.spun_id);
+    }
+  }
+
+  return hero;
+}
+
+// ─── Merge + dedup ────────────────────────────────────────────────────────────
+
+function merge(...arrays: ContentItem[][]): ContentItem[] {
+  const seen   = new Set<string>();
+  const result: ContentItem[] = [];
+  for (const arr of arrays) {
+    for (const item of arr) {
+      if (!seen.has(item.spun_id)) {
+        seen.add(item.spun_id);
+        result.push(item);
+      }
+    }
+  }
+  return result;
+}
+
+// ─── /home/movie builder ──────────────────────────────────────────────────────
+
+async function buildMovieHome(env: Env) {
+  const year = new Date().getFullYear();
+
+  // Parallel fetch all data sources
+  const [
+    trending, nowPlaying, upcoming, thisYear, allTimeGreats, hiddenGems,
+    action, comedy, scifi, romance, horror, shortWatch, epicWatch, awardWinners,
+    worldCinema, docs, animated, throwback,
+  ] = await Promise.all([
     getTmdbTrending(env, 'movie'),
-    tmdbDiscover(env, 'movie', { sort_by: 'popularity.desc' }),
+    tmdbDiscover(env, 'movie', { sort_by: 'release_date.desc', 'primary_release_date.gte': `${year}-01-01`, 'vote_count.gte': 50 }),
+    tmdbDiscover(env, 'movie', { sort_by: 'primary_release_date.asc', 'primary_release_date.gte': `${year}-01-01`, 'primary_release_date.lte': `${year + 1}-12-31`, 'with_release_type': '2|3' }),
+    tmdbDiscover(env, 'movie', { sort_by: 'vote_average.desc', 'primary_release_date.gte': `${year}-01-01`, 'vote_count.gte': 200 }),
     tmdbDiscover(env, 'movie', { sort_by: 'vote_average.desc', 'vote_count.gte': 1000 }),
-    tmdbDiscover(env, 'movie', { sort_by: 'popularity.desc', with_genres: '28' }),
-    tmdbDiscover(env, 'movie', { sort_by: 'popularity.desc', with_genres: '27' }),
-    tmdbDiscover(env, 'movie', { sort_by: 'popularity.desc', with_genres: '878' }),
-    tmdbDiscover(env, 'movie', {
-      sort_by:                      'release_date.desc',
-      'primary_release_date.gte':   `${currentYear - 1}-01-01`,
-      'vote_count.gte':             50,
-    }),
+    tmdbDiscover(env, 'movie', { sort_by: 'vote_average.desc', 'vote_average.gte': 7.5, 'popularity.lte': 20, 'vote_count.gte': 100 }),
+    tmdbDiscover(env, 'movie', { sort_by: 'popularity.desc', with_genres: '28,53' }),
+    tmdbDiscover(env, 'movie', { sort_by: 'popularity.desc', with_genres: '35' }),
+    tmdbDiscover(env, 'movie', { sort_by: 'vote_average.desc', with_genres: '878,9648' }),
+    tmdbDiscover(env, 'movie', { sort_by: 'popularity.desc', with_genres: '10749,18' }),
+    tmdbDiscover(env, 'movie', { sort_by: 'vote_average.desc', with_genres: '27', 'vote_count.gte': 200 }),
+    tmdbDiscover(env, 'movie', { sort_by: 'popularity.desc', 'with_runtime.lte': 90, 'vote_average.gte': 7.0 }),
+    tmdbDiscover(env, 'movie', { sort_by: 'vote_average.desc', 'with_runtime.gte': 150 }),
+    tmdbDiscover(env, 'movie', { sort_by: 'vote_average.desc', 'vote_average.gte': 8.0, 'vote_count.gte': 1000 }),
+    tmdbDiscover(env, 'movie', { sort_by: 'popularity.desc', 'with_original_language': 'xx', 'vote_average.gte': 7.5 }), // non-en handled below
+    tmdbDiscover(env, 'movie', { sort_by: 'vote_average.desc', with_genres: '99', 'vote_count.gte': 100 }),
+    tmdbDiscover(env, 'movie', { sort_by: 'popularity.desc', with_genres: '16', without_keywords: '210024' }), // animation excl. anime keyword
+    tmdbDiscover(env, 'movie', { sort_by: 'vote_average.desc', 'primary_release_date.lte': '1999-12-31', 'vote_average.gte': 7.5 }),
   ]);
 
-  const [heroItems, popularItems, topItems, actionItems, horrorItems, scifiItems, newItems] =
-    await Promise.all([
-      tmdbListToItems(env, trending.slice(0, 5),  'movie'),
-      tmdbListToItems(env, popular,               'movie'),
-      tmdbListToItems(env, topRated,              'movie'),
-      tmdbListToItems(env, action,                'movie'),
-      tmdbListToItems(env, horror,                'movie'),
-      tmdbListToItems(env, scifi,                 'movie'),
-      tmdbListToItems(env, newReleases,           'movie'),
-    ]);
+  // Parallel convert all to ContentItems
+  const [
+    trendingItems, nowPlayingItems, upcomingItems, thisYearItems, allTimeItems, hiddenItems,
+    actionItems, comedyItems, scifiItems, romanceItems, horrorItems, shortItems, epicItems,
+    awardItems, worldItems, docsItems, animatedItems, throwbackItems,
+  ] = await Promise.all([
+    tmdbToItems(env, trending,      'movie'),
+    tmdbToItems(env, nowPlaying,    'movie'),
+    tmdbToItems(env, upcoming,      'movie'),
+    tmdbToItems(env, thisYear,      'movie'),
+    tmdbToItems(env, allTimeGreats, 'movie'),
+    tmdbToItems(env, hiddenGems,    'movie'),
+    tmdbToItems(env, action,        'movie'),
+    tmdbToItems(env, comedy,        'movie'),
+    tmdbToItems(env, scifi,         'movie'),
+    tmdbToItems(env, romance,       'movie'),
+    tmdbToItems(env, horror,        'movie'),
+    tmdbToItems(env, shortWatch,    'movie'),
+    tmdbToItems(env, epicWatch,     'movie'),
+    tmdbToItems(env, awardWinners,  'movie'),
+    tmdbToItems(env, worldCinema,   'movie'),
+    tmdbToItems(env, docs,          'movie'),
+    tmdbToItems(env, animated,      'movie'),
+    tmdbToItems(env, throwback,     'movie'),
+  ]);
+
+  // Franchise rows — parallel
+  const [
+    mcuRow, dceuRow, dcuRow, ffRow, miRow, bondRow,
+  ] = await Promise.all([
+    franchiseRow(env, 'mcu',               'MCU Line-Up',           mcu),
+    franchiseRow(env, 'dceu',              'DC Extended Universe',   dceu),
+    franchiseRow(env, 'dcu',               'DC Universe',            dcu),
+    franchiseRow(env, 'fast-furious',      'Fast & Furious',         fastFurious),
+    franchiseRow(env, 'mission-impossible', 'Mission: Impossible',   missionImpossible),
+    franchiseRow(env, 'james-bond',        'James Bond',             jamesBond),
+  ]);
+
+  const hero = await buildHero(env, movieHero, trendingItems);
 
   return {
-    hero: heroItems,
+    hero,
     rows: [
-      { id: 'popular',      title: 'Popular Movies',     items: popularItems },
-      { id: 'new',          title: 'New Releases',       items: newItems     },
-      { id: 'top-rated',    title: 'Top Rated',          items: topItems     },
-      { id: 'action',       title: 'Action & Adventure', items: actionItems  },
-      { id: 'horror',       title: 'Horror',             items: horrorItems  },
-      { id: 'sci-fi',       title: 'Sci-Fi',             items: scifiItems   },
+      { id: 'in-cinemas',          title: 'In Cinemas Now',        items: nowPlayingItems },
+      { id: 'coming-soon',         title: 'Coming Soon',           items: upcomingItems   },
+      mcuRow,
+      dceuRow,
+      dcuRow,
+      { id: 'this-year',           title: "This Year's Best",      items: thisYearItems   },
+      { id: 'all-time-greats',     title: 'All-Time Greats',       items: allTimeItems    },
+      { id: 'hidden-gems',         title: 'Hidden Gems',           items: hiddenItems     },
+      { id: 'action-adrenaline',   title: 'Action & Adrenaline',   items: actionItems     },
+      { id: 'make-you-laugh',      title: 'Make You Laugh',        items: comedyItems     },
+      { id: 'make-you-think',      title: 'Make You Think',        items: scifiItems      },
+      { id: 'make-you-feel',       title: 'Make You Feel',         items: romanceItems    },
+      { id: 'horror-vault',        title: 'Horror Vault',          items: horrorItems     },
+      ffRow,
+      miRow,
+      bondRow,
+      { id: 'short-watch',         title: 'Short Watch',           items: shortItems      },
+      { id: 'epic-watch',          title: 'Epic Watch',            items: epicItems       },
+      { id: 'award-winners',       title: 'Award Winners',         items: awardItems      },
+      { id: 'world-cinema',        title: 'World Cinema',          items: worldItems      },
+      { id: 'documentaries',       title: 'Documentaries',         items: docsItems       },
+      { id: 'animated-films',      title: 'Animated Films',        items: animatedItems   },
+      { id: 'throwback',           title: 'Throwback',             items: throwbackItems  },
+      { id: 'bollywood',           title: 'Bollywood & Beyond',    items: []              }, // Daratech — Session 2
     ],
   };
 }
 
-// ─── TV homepage ──────────────────────────────────────────────────────────────
+// ─── /home/tv builder ─────────────────────────────────────────────────────────
 
-async function buildTvHome(env: Env): Promise<HomeResponse> {
-  const [trending, popular, topRated, drama, action, comedy] = await Promise.all([
+async function buildTvHome(env: Env) {
+  const year      = new Date().getFullYear();
+  const yearStart = `${year}-01-01`;
+  const month30   = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
+
+  const [
+    trending, onTheAir, newSeasons, netflix, thisYear, allTimeGreats, bingeWorthy,
+    cantLookAway, comedy, feel, sciFiFantasy,
+    miniseries, hiddenGems, longRunners,
+    kDrama, british, hbo, a24, critAcc, ended, throwback,
+  ] = await Promise.all([
     getTmdbTrending(env, 'tv'),
-    tmdbDiscover(env, 'tv', { sort_by: 'popularity.desc' }),
+    tmdbDiscover(env, 'tv', { sort_by: 'popularity.desc', 'air_date.gte': new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0] }),
+    tmdbDiscover(env, 'tv', { sort_by: 'popularity.desc', 'first_air_date.gte': month30, 'vote_count.gte': 10 }),
+    tmdbDiscover(env, 'tv', { sort_by: 'popularity.desc', with_watch_providers: '8', watch_region: 'US' }),
+    tmdbDiscover(env, 'tv', { sort_by: 'vote_average.desc', 'first_air_date.gte': yearStart, 'vote_average.gte': 7.5, 'vote_count.gte': 50 }),
     tmdbDiscover(env, 'tv', { sort_by: 'vote_average.desc', 'vote_count.gte': 500 }),
-    tmdbDiscover(env, 'tv', { sort_by: 'popularity.desc', with_genres: '18' }),
-    tmdbDiscover(env, 'tv', { sort_by: 'popularity.desc', with_genres: '10759' }),
+    tmdbDiscover(env, 'tv', { sort_by: 'popularity.desc', 'vote_average.gte': 7.5, 'vote_count.gte': 100 }),
+    tmdbDiscover(env, 'tv', { sort_by: 'popularity.desc', with_genres: '80,9648,10759', 'vote_average.gte': 7.5 }),
     tmdbDiscover(env, 'tv', { sort_by: 'popularity.desc', with_genres: '35' }),
-  ]);
-
-  const [heroItems, popularItems, topItems, dramaItems, actionItems, comedyItems] =
-    await Promise.all([
-      tmdbListToItems(env, trending.slice(0, 5), 'tv'),
-      tmdbListToItems(env, popular,              'tv'),
-      tmdbListToItems(env, topRated,             'tv'),
-      tmdbListToItems(env, drama,                'tv'),
-      tmdbListToItems(env, action,               'tv'),
-      tmdbListToItems(env, comedy,               'tv'),
-    ]);
-
-  return {
-    hero: heroItems,
-    rows: [
-      { id: 'popular',   title: 'Popular Series',     items: popularItems },
-      { id: 'top-rated', title: 'Top Rated',          items: topItems     },
-      { id: 'drama',     title: 'Drama',              items: dramaItems   },
-      { id: 'action',    title: 'Action & Adventure', items: actionItems  },
-      { id: 'comedy',    title: 'Comedy',             items: comedyItems  },
-    ],
-  };
-}
-
-// ─── Anime homepage ───────────────────────────────────────────────────────────
-
-async function buildAnimeHome(env: Env): Promise<HomeResponse> {
-  const { season, year } = getCurrentSeason();
-
-  const [trending, airing, upcoming, seasonal, action, romance, isekai] = await Promise.all([
-    getAnilistTrending(1, 20),
-    getAnilistAiring(1, 20),
-    getAnilistUpcoming(1, 10),
-    getAnilistSeasonal(season, year, 1, 20),
-    getAnilistByGenre('Action', 1, 20),
-    getAnilistByGenre('Romance', 1, 20),
-    getAnilistByGenre('Isekai', 1, 20),
+    tmdbDiscover(env, 'tv', { sort_by: 'vote_average.desc', with_genres: '18,10749' }),
+    tmdbDiscover(env, 'tv', { sort_by: 'popularity.desc', with_genres: '10765' }),
+    tmdbDiscover(env, 'tv', { sort_by: 'vote_average.desc', 'vote_count.gte': 100 }),  // miniseries filtered below
+    tmdbDiscover(env, 'tv', { sort_by: 'vote_average.desc', 'vote_average.gte': 7.5, 'popularity.lte': 15 }),
+    tmdbDiscover(env, 'tv', { sort_by: 'popularity.desc', 'status': '0' }),            // 0 = Returning
+    tmdbDiscover(env, 'tv', { sort_by: 'popularity.desc', with_origin_country: 'KR' }),
+    tmdbDiscover(env, 'tv', { sort_by: 'popularity.desc', with_origin_country: 'GB', 'vote_average.gte': 7.5 }),
+    tmdbDiscover(env, 'tv', { sort_by: 'popularity.desc', with_networks: '49' }),
+    tmdbDiscover(env, 'tv', { sort_by: 'popularity.desc', with_companies: '41077' }),
+    tmdbDiscover(env, 'tv', { sort_by: 'vote_average.desc', 'vote_average.gte': 8.0, 'vote_count.gte': 500 }),
+    tmdbDiscover(env, 'tv', { sort_by: 'vote_average.desc', 'vote_average.gte': 8.0, with_status: '4' }),  // 4 = Ended
+    tmdbDiscover(env, 'tv', { sort_by: 'vote_average.desc', 'first_air_date.lte': '2009-12-31', 'vote_average.gte': 8.0 }),
   ]);
 
   const [
-    heroItems, airingItems, upcomingItems,
-    seasonalItems, actionItems, romanceItems, isekaiItems,
+    trendingItems, onAirItems, newSeasonsItems, netflixItems, thisYearItems, allTimeItems, bingeItems,
+    cantLookItems, comedyItems, feelItems, sciFiItems,
+    miniseriesItems, hiddenItems, longItems,
+    kDramaItems, britishItems, hboItems, a24Items, critItems, endedItems, throwbackItems,
   ] = await Promise.all([
-    anilistListToItems(env, trending.slice(0, 5)),
-    anilistListToItems(env, airing),
-    anilistListToItems(env, upcoming),
-    anilistListToItems(env, seasonal),
-    anilistListToItems(env, action),
-    anilistListToItems(env, romance),
-    anilistListToItems(env, isekai),
+    tmdbToItems(env, trending,     'tv'),
+    tmdbToItems(env, onTheAir,     'tv'),
+    tmdbToItems(env, newSeasons,   'tv'),
+    tmdbToItems(env, netflix,      'tv'),
+    tmdbToItems(env, thisYear,     'tv'),
+    tmdbToItems(env, allTimeGreats,'tv'),
+    tmdbToItems(env, bingeWorthy,  'tv'),
+    tmdbToItems(env, cantLookAway, 'tv'),
+    tmdbToItems(env, comedy,       'tv'),
+    tmdbToItems(env, feel,         'tv'),
+    tmdbToItems(env, sciFiFantasy, 'tv'),
+    tmdbToItems(env, miniseries,   'tv'),
+    tmdbToItems(env, hiddenGems,   'tv'),
+    tmdbToItems(env, longRunners,  'tv'),
+    tmdbToItems(env, kDrama,       'tv'),
+    tmdbToItems(env, british,      'tv'),
+    tmdbToItems(env, hbo,          'tv'),
+    tmdbToItems(env, a24,          'tv'),
+    tmdbToItems(env, critAcc,      'tv'),
+    tmdbToItems(env, ended,        'tv'),
+    tmdbToItems(env, throwback,    'tv'),
   ]);
 
-  const seasonLabel = `${season.charAt(0) + season.slice(1).toLowerCase()} ${year}`;
+  const [marvelTvRow, starWarsRow] = await Promise.all([
+    franchiseRow(env, 'marvel-tv',  'Marvel TV',           marvelTv),
+    franchiseRow(env, 'star-wars',  'Star Wars Universe',  starWars),
+  ]);
+
+  const hero = await buildHero(env, tvHero, trendingItems);
 
   return {
-    hero: heroItems,
+    hero,
     rows: [
-      { id: 'airing',   title: 'Currently Airing',  items: airingItems   },
-      { id: 'seasonal', title: seasonLabel,          items: seasonalItems },
-      { id: 'upcoming', title: 'Upcoming',           items: upcomingItems },
-      { id: 'action',   title: 'Action',             items: actionItems   },
-      { id: 'romance',  title: 'Romance',            items: romanceItems  },
-      { id: 'isekai',   title: 'Isekai',             items: isekaiItems   },
+      { id: 'airing-this-week',   title: 'Airing This Week',     items: onAirItems       },
+      { id: 'new-seasons',        title: 'New Seasons',           items: newSeasonsItems  },
+      { id: 'netflix-originals',  title: 'Netflix Originals',     items: netflixItems     },
+      marvelTvRow,
+      starWarsRow,
+      { id: 'this-year',          title: "This Year's Best",      items: thisYearItems    },
+      { id: 'all-time-greats',    title: 'All-Time Greats',       items: allTimeItems     },
+      { id: 'binge-worthy',       title: 'Binge-Worthy',          items: bingeItems       },
+      { id: 'cant-look-away',     title: "Can't Look Away",       items: cantLookItems    },
+      { id: 'make-you-laugh',     title: 'Make You Laugh',        items: comedyItems      },
+      { id: 'make-you-feel',      title: 'Make You Feel',         items: feelItems        },
+      { id: 'sci-fi-fantasy',     title: 'Sci-Fi & Fantasy',      items: sciFiItems       },
+      { id: 'miniseries',         title: 'Miniseries',            items: miniseriesItems  },
+      { id: 'hidden-gems',        title: 'Hidden Gems',           items: hiddenItems      },
+      { id: 'short-seasons',      title: 'Short Seasons',         items: []               }, // requires episode-level filter — Session 2
+      { id: 'long-runners',       title: 'Long Runners',          items: longItems        },
+      { id: 'k-drama',            title: 'K-Drama',               items: kDramaItems      },
+      { id: 'british-tv',         title: 'British TV',            items: britishItems     },
+      { id: 'hbo',                title: 'HBO',                   items: hboItems         },
+      { id: 'a24',                title: 'A24',                   items: a24Items         },
+      { id: 'critically-acclaimed', title: 'Critically Acclaimed', items: critItems       },
+      { id: 'ended-worth-it',     title: 'Ended But Worth It',    items: endedItems       },
+      { id: 'throwback-tv',       title: 'Throwback TV',          items: throwbackItems   },
     ],
   };
 }
 
-// ─── GET /home/movie ──────────────────────────────────────────────────────────
+// ─── /home/anime builder ──────────────────────────────────────────────────────
+
+async function buildAnimeHome(env: Env) {
+  const { season, year } = getCurrentSeason();
+
+  const [
+    trending, airing, nextSeason, seasonTop, allTimeGreatest, mostPopular,
+    forOtaku, startHere, actionHype, laughOutLoud, feelsRomance, darkPsych,
+    isekaiList, shonenLegends, hiddenMasterpieces, animeFilms,
+    mappa, ufotable, ghibli, classicEra, rewatching,
+  ] = await Promise.all([
+    getAnilistTrending(env, 1, 30),
+    getAnilistAiring(env, 1, 30),
+    getAnilistNextSeason(env, 1, 30),
+    getAnilistSeasonTopScored(env, 75, 1, 30),
+    getAnilistRankingsAlltime(env, 1, 30),
+    getAnilistRankingsPopular(env, 1, 30),
+    // For the Otaku — high score, low popularity
+    getAnilistFiltered(env, { minScore: 80, maxPopularity: 100000, sort: 'SCORE_DESC' }),
+    // New to Anime? Start Here
+    getAnilistFiltered(env, { genre: 'Action', minScore: 78, maxEpisodes: 50, status: 'FINISHED', sort: 'POPULARITY_DESC' }),
+    getAnilistByGenre(env, 'Action', 1, 30),
+    getAnilistByGenre(env, 'Comedy', 1, 30),
+    getAnilistByGenre(env, 'Romance', 1, 30),
+    // Dark & Psychological — via tag
+    getAnilistByTag(env, 'Psychological', 1, 30),
+    getAnilistByTag(env, 'Isekai', 1, 30),
+    // Shonen Legends — via demographic tag
+    getAnilistFiltered(env, { tag: 'Shounen', minScore: 78, sort: 'POPULARITY_DESC' }),
+    // Hidden Masterpieces
+    getAnilistFiltered(env, { minScore: 82, maxPopularity: 80000, sort: 'SCORE_DESC' }),
+    // Anime Films
+    getAnilistFiltered(env, { format: 'MOVIE', minScore: 78, sort: 'SCORE_DESC' }),
+    // Studio rows — MAPPA=569, Ufotable=43, Ghibli=21
+    getAnilistStudioWorks(env, 569, 1, 30).then((r) => r.media),
+    getAnilistStudioWorks(env, 43,  1, 30).then((r) => r.media),
+    getAnilistStudioWorks(env, 21,  1, 30).then((r) => r.media),
+    // Classic Era — before 2005
+    getAnilistFiltered(env, { minScore: 78, maxStartYear: 2005, sort: 'SCORE_DESC' }),
+    // Currently Rewatching — high score + high favourites
+    getAnilistFiltered(env, { minScore: 82, minFavourites: 10000, status: 'FINISHED', sort: 'SCORE_DESC' }),
+  ]);
+
+  const [
+    trendingItems, airingItems, nextSeasonItems, seasonTopItems,
+    allTimeItems, popularItems, otakuItems, startHereItems,
+    actionItems, comedyItems, romanceItems, darkItems, isekaiItems,
+    shonenItems, hiddenItems, filmsItems,
+    mappaItems, ufotableItems, ghibliItems, classicItems, rewatchItems,
+  ] = await Promise.all([
+    anilistToItems(env, trending),
+    anilistToItems(env, airing),
+    anilistToItems(env, nextSeason),
+    anilistToItems(env, seasonTop),
+    anilistToItems(env, allTimeGreatest),
+    anilistToItems(env, mostPopular),
+    anilistToItems(env, forOtaku),
+    anilistToItems(env, startHere),
+    anilistToItems(env, actionHype),
+    anilistToItems(env, laughOutLoud),
+    anilistToItems(env, feelsRomance),
+    anilistToItems(env, darkPsych),
+    anilistToItems(env, isekaiList),
+    anilistToItems(env, shonenLegends),
+    anilistToItems(env, hiddenMasterpieces),
+    anilistToItems(env, animeFilms),
+    anilistToItems(env, mappa),
+    anilistToItems(env, ufotable),
+    anilistToItems(env, ghibli),
+    anilistToItems(env, classicEra),
+    anilistToItems(env, rewatching),
+  ]);
+
+  // Franchise rows — parallel
+  const [
+    aotRow, fateRow, bigThreeRow, dbRow, monogatariRow, gundamRow, typeMoonRow,
+  ] = await Promise.all([
+    franchiseRow(env, 'attack-on-titan',   'Attack on Titan',        attackOnTitan),
+    franchiseRow(env, 'fate-universe',     'Fate Universe',           fateUniverse),
+    franchiseRow(env, 'shounen-big-three', 'Shounen Big Three',       shounenBigThree),
+    franchiseRow(env, 'dragon-ball',       'Dragon Ball',             dragonBall),
+    franchiseRow(env, 'monogatari',        'Monogatari Series',       monogatari),
+    franchiseRow(env, 'gundam',            'Gundam Universe',         gundam),
+    franchiseRow(env, 'type-moon',         'Type-Moon Universe',      typeMoon),
+  ]);
+
+  const hero = await buildHero(env, animeHero, trendingItems);
+
+  return {
+    hero,
+    rows: [
+      { id: 'airing-this-season', title: 'Airing This Season',        items: airingItems      },
+      { id: 'next-season',        title: 'Next Season Preview',        items: nextSeasonItems  },
+      aotRow,
+      fateRow,
+      bigThreeRow,
+      { id: 'this-season-top',    title: "This Season's Top Picks",    items: seasonTopItems   },
+      { id: 'all-time-greatest',  title: 'All-Time Greatest',          items: allTimeItems     },
+      { id: 'most-popular',       title: 'Most Popular Ever',          items: popularItems     },
+      dbRow,
+      monogatariRow,
+      gundamRow,
+      typeMoonRow,
+      { id: 'for-the-otaku',      title: 'For the Otaku',              items: otakuItems       },
+      { id: 'start-here',         title: 'New to Anime? Start Here',   items: startHereItems   },
+      { id: 'action-hype',        title: 'Action & Hype',              items: actionItems      },
+      { id: 'laugh-out-loud',     title: 'Laugh Out Loud',             items: comedyItems      },
+      { id: 'feels-romance',      title: 'Feels & Romance',            items: romanceItems     },
+      { id: 'dark-psychological', title: 'Dark & Psychological',       items: darkItems        },
+      { id: 'isekai-universe',    title: 'Isekai Universe',            items: isekaiItems      },
+      { id: 'shonen-legends',     title: 'Shonen Legends',             items: shonenItems      },
+      { id: 'hidden-masterpieces', title: 'Hidden Masterpieces',       items: hiddenItems      },
+      { id: 'anime-films',        title: 'Anime Films',                items: filmsItems       },
+      { id: 'studio-mappa',       title: 'By Studio — MAPPA',          items: mappaItems       },
+      { id: 'studio-ufotable',    title: 'By Studio — Ufotable',       items: ufotableItems    },
+      { id: 'studio-ghibli',      title: 'By Studio — Ghibli',         items: ghibliItems      },
+      { id: 'classic-era',        title: 'Classic Era',                items: classicItems     },
+      { id: 'currently-rewatching', title: 'Currently Rewatching',     items: rewatchItems     },
+    ],
+  };
+}
+
+// ─── /home (general) builder ──────────────────────────────────────────────────
+
+async function buildGeneralHome(env: Env) {
+  const year = new Date().getFullYear();
+  const { season } = getCurrentSeason();
+
+  const [
+    tmdbTrending, tmdbNowPlaying, tmdbOnAir,
+    anilistTrending, anilistAiring, anilistSeasonal,
+    // Mood rows — both TMDB and AniList
+    tmdbAction, anilistAction,
+    tmdbComedy, anilistComedy,
+    tmdbThriller, anilistPsych,
+    tmdbFeel, anilistSliceOfLife,
+    tmdbScifi, anilistScifi,
+    tmdbHorror, anilistDark,
+    // Anime-only rows
+    animeAllTime, animeSeason, animeShort, animeClassic, animeOtaku, animeFilms,
+    // Film/TV rows
+    tmdbCritAcc, tmdbHiddenGems, anilistHiddenGems,
+    tmdbBinge, tmdbShortWatch, tmdbShortTv, tmdbKDrama,
+  ] = await Promise.all([
+    getTmdbTrending(env, 'all'),
+    tmdbDiscover(env, 'movie', { sort_by: 'release_date.desc', 'primary_release_date.gte': `${year}-01-01` }),
+    tmdbDiscover(env, 'tv',    { sort_by: 'popularity.desc', 'air_date.gte': new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0] }),
+    getAnilistTrending(env, 1, 20),
+    getAnilistAiring(env, 1, 20),
+    getAnilistSeasonal(env, season, new Date().getFullYear(), 1, 20),
+    // Action
+    tmdbDiscover(env, 'movie', { sort_by: 'popularity.desc', with_genres: '28,53' }),
+    getAnilistByGenre(env, 'Action', 1, 20),
+    // Comedy
+    tmdbDiscover(env, 'movie', { sort_by: 'popularity.desc', with_genres: '35' }),
+    getAnilistByGenre(env, 'Comedy', 1, 20),
+    // Thriller/Suspense
+    tmdbDiscover(env, 'movie', { sort_by: 'popularity.desc', with_genres: '53,9648,80' }),
+    getAnilistByTag(env, 'Psychological', 1, 20),
+    // Feel good
+    tmdbDiscover(env, 'movie', { sort_by: 'popularity.desc', with_genres: '10749,10751', 'vote_average.gte': 7.0 }),
+    getAnilistByGenre(env, 'Slice of Life', 1, 20),
+    // Mind-bending
+    tmdbDiscover(env, 'movie', { sort_by: 'popularity.desc', with_genres: '878,9648' }),
+    getAnilistFiltered(env, { genre: 'Sci-Fi', sort: 'POPULARITY_DESC' }),
+    // Dark
+    tmdbDiscover(env, 'movie', { sort_by: 'popularity.desc', with_genres: '27,53' }),
+    getAnilistFiltered(env, { tag: 'Psychological', minScore: 75, sort: 'SCORE_DESC' }),
+    // Anime-specific rows
+    getAnilistRankingsAlltime(env, 1, 30),
+    getAnilistSeasonal(env, season, new Date().getFullYear(), 1, 30),
+    getAnilistFiltered(env, { status: 'FINISHED', maxEpisodes: 15, minScore: 75, sort: 'SCORE_DESC' }),
+    getAnilistFiltered(env, { maxStartYear: 2010, minScore: 75, sort: 'SCORE_DESC' }),
+    getAnilistFiltered(env, { minScore: 80, maxPopularity: 100000, sort: 'SCORE_DESC' }),
+    getAnilistFiltered(env, { format: 'MOVIE', minScore: 75, sort: 'SCORE_DESC' }),
+    // Film/TV rows
+    tmdbDiscover(env, 'movie', { sort_by: 'vote_average.desc', 'vote_average.gte': 8.0, 'vote_count.gte': 1000 }),
+    tmdbDiscover(env, 'movie', { sort_by: 'vote_average.desc', 'vote_average.gte': 7.5, 'popularity.lte': 20 }),
+    getAnilistFiltered(env, { minScore: 80, maxPopularity: 50000, sort: 'SCORE_DESC' }),
+    tmdbDiscover(env, 'tv',   { sort_by: 'popularity.desc', 'vote_average.gte': 7.5, 'vote_count.gte': 100 }),
+    tmdbDiscover(env, 'movie',{ sort_by: 'popularity.desc', 'with_runtime.lte': 90, 'vote_average.gte': 7.0 }),
+    tmdbDiscover(env, 'tv',   { sort_by: 'vote_average.desc', 'vote_count.gte': 50 }),
+    tmdbDiscover(env, 'tv',   { sort_by: 'popularity.desc', with_origin_country: 'KR' }),
+  ]);
+
+  // Parallel DB entry for Just Added
+  const db = getDb(env);
+  const justAddedRaw = await db
+    .selectFrom('media_titles')
+    .select(['spun_id', 'title', 'content_type', 'year', 'rating', 'poster_path'])
+    .orderBy('created_at', 'desc')
+    .limit(30)
+    .execute();
+
+  const justAddedItems: ContentItem[] = justAddedRaw.map((r) => ({
+    spun_id: r.spun_id,
+    type:    r.content_type as 'movie' | 'tv' | 'anime',
+    title:   r.title        ?? '',
+    year:    r.year         ?? null,
+    rating:  r.rating       ?? null,
+    poster:  r.poster_path  ?? null,
+  }));
+
+  // Convert all
+  const [
+    tmdbTrendingItems, nowPlayingItems, onAirItems,
+    anilistTrendingItems, airingItems, seasonalItems,
+    tmdbActionItems, anilistActionItems,
+    tmdbComedyItems, anilistComedyItems,
+    tmdbThrillerItems, anilistPsychItems,
+    tmdbFeelItems, anilistSliceItems,
+    tmdbScifiItems, anilistScifiItems,
+    tmdbHorrorItems, anilistDarkItems,
+    animeAllTimeItems, animeSeasonItems, animeShortItems,
+    animeClassicItems, animeOtakuItems, animeFilmItems,
+    tmdbCritItems, tmdbHiddenMovieItems, anilistHiddenItems,
+    tmdbBingeItems, tmdbShortMovieItems, tmdbShortTvItems, tmdbKDramaItems,
+  ] = await Promise.all([
+    tmdbToItems(env, tmdbTrending,    'movie'),
+    tmdbToItems(env, tmdbNowPlaying,  'movie'),
+    tmdbToItems(env, tmdbOnAir,       'tv'),
+    anilistToItems(env, anilistTrending),
+    anilistToItems(env, anilistAiring),
+    anilistToItems(env, anilistSeasonal),
+    tmdbToItems(env, tmdbAction,      'movie'),
+    anilistToItems(env, anilistAction),
+    tmdbToItems(env, tmdbComedy,      'movie'),
+    anilistToItems(env, anilistComedy),
+    tmdbToItems(env, tmdbThriller,    'movie'),
+    anilistToItems(env, anilistPsych),
+    tmdbToItems(env, tmdbFeel,        'movie'),
+    anilistToItems(env, anilistSliceOfLife),
+    tmdbToItems(env, tmdbScifi,       'movie'),
+    anilistToItems(env, anilistScifi),
+    tmdbToItems(env, tmdbHorror,      'movie'),
+    anilistToItems(env, anilistDark),
+    anilistToItems(env, animeAllTime),
+    anilistToItems(env, animeSeason),
+    anilistToItems(env, animeShort),
+    anilistToItems(env, animeClassic),
+    anilistToItems(env, animeOtaku),
+    anilistToItems(env, animeFilms),
+    tmdbToItems(env, tmdbCritAcc,     'movie'),
+    tmdbToItems(env, tmdbHiddenGems,  'movie'),
+    anilistToItems(env, anilistHiddenGems),
+    tmdbToItems(env, tmdbBinge,       'tv'),
+    tmdbToItems(env, tmdbShortWatch,  'movie'),
+    tmdbToItems(env, tmdbShortTv,     'tv'),
+    tmdbToItems(env, tmdbKDrama,      'tv'),
+  ]);
+
+  // Merge mixed rows
+  const trendingMixed   = merge(tmdbTrendingItems, anilistTrendingItems).slice(0, ROW_MAX);
+  const newThisWeek     = merge(nowPlayingItems, onAirItems, seasonalItems).slice(0, ROW_MAX);
+  const actionMixed     = merge(tmdbActionItems, anilistActionItems).slice(0, ROW_MAX);
+  const comedyMixed     = merge(tmdbComedyItems, anilistComedyItems).slice(0, ROW_MAX);
+  const thrillerMixed   = merge(tmdbThrillerItems, anilistPsychItems).slice(0, ROW_MAX);
+  const feelMixed       = merge(tmdbFeelItems, anilistSliceItems).slice(0, ROW_MAX);
+  const scifiMixed      = merge(tmdbScifiItems, anilistScifiItems).slice(0, ROW_MAX);
+  const darkMixed       = merge(tmdbHorrorItems, anilistDarkItems).slice(0, ROW_MAX);
+  const hiddenMixed     = merge(tmdbHiddenMovieItems, anilistHiddenItems).slice(0, ROW_MAX);
+  const shortWatchMixed = merge(tmdbShortMovieItems, tmdbShortTvItems).slice(0, ROW_MAX);
+
+  // Franchise rows
+  const [mcuRow, aotRow] = await Promise.all([
+    franchiseRow(env, 'mcu',              'MCU Line-Up',       mcu),
+    franchiseRow(env, 'attack-on-titan',  'Attack on Titan',   attackOnTitan),
+  ]);
+
+  const hero = await buildHero(env, homeHero, trendingMixed);
+
+  return {
+    hero,
+    rows: [
+      { id: 'trending-today',      title: 'Trending Today',          items: trendingMixed    },
+      { id: 'new-this-week',       title: 'New This Week',           items: newThisWeek      },
+      { id: 'airing-now',          title: 'Airing Now',              items: airingItems      },
+      { id: 'just-added',          title: 'Just Added',              items: justAddedItems   },
+      mcuRow,
+      aotRow,
+      { id: 'action-adrenaline',   title: 'Action & Adrenaline',     items: actionMixed      },
+      { id: 'something-funny',     title: 'Something Funny',         items: comedyMixed      },
+      { id: 'cant-look-away',      title: "Can't Look Away",         items: thrillerMixed    },
+      { id: 'feel-good',           title: 'Feel Good',               items: feelMixed        },
+      { id: 'mind-bending',        title: 'Mind-Bending',            items: scifiMixed       },
+      { id: 'dark-intense',        title: 'Dark & Intense',          items: darkMixed        },
+      { id: 'top-anime-alltime',   title: 'Top Anime of All Time',   items: animeAllTimeItems },
+      { id: 'this-season-anime',   title: "This Season's Anime",     items: animeSeasonItems  },
+      { id: 'short-sweet-anime',   title: 'Short & Sweet',           items: animeShortItems   },
+      { id: 'classic-anime',       title: 'Classic Anime',           items: animeClassicItems },
+      { id: 'for-the-otaku',       title: 'For the Otaku',           items: animeOtakuItems   },
+      { id: 'critically-acclaimed', title: 'Critically Acclaimed',   items: tmdbCritItems    },
+      { id: 'hidden-gems',         title: 'Hidden Gems',             items: hiddenMixed      },
+      { id: 'binge-worthy',        title: 'Binge-Worthy Series',     items: tmdbBingeItems   },
+      { id: 'short-watch',         title: 'Short Watch',             items: shortWatchMixed  },
+      { id: 'k-drama',             title: 'K-Drama',                 items: tmdbKDramaItems  },
+      { id: 'anime-films',         title: 'Anime Films',             items: animeFilmItems   },
+    ],
+  };
+}
+
+// ─── Routes ───────────────────────────────────────────────────────────────────
 
 home.get('/movie', async (c) => {
   const cacheKey = CacheKeys.home('movie');
@@ -193,8 +722,6 @@ home.get('/movie', async (c) => {
   return jsonResponse(payload);
 });
 
-// ─── GET /home/tv ─────────────────────────────────────────────────────────────
-
 home.get('/tv', async (c) => {
   const cacheKey = CacheKeys.home('tv');
   const cached   = await kvGet(c.env, cacheKey);
@@ -204,8 +731,6 @@ home.get('/tv', async (c) => {
   await kvSet(c.env, cacheKey, payload, TTL.home);
   return jsonResponse(payload);
 });
-
-// ─── GET /home/anime ──────────────────────────────────────────────────────────
 
 home.get('/anime', async (c) => {
   const cacheKey = CacheKeys.home('anime');
@@ -217,26 +742,12 @@ home.get('/anime', async (c) => {
   return jsonResponse(payload);
 });
 
-// ─── GET /home ────────────────────────────────────────────────────────────────
-
 home.get('/', async (c) => {
   const cacheKey = CacheKeys.home('all');
   const cached   = await kvGet(c.env, cacheKey);
   if (cached) return jsonResponse(cached);
 
-  // Build all three in parallel
-  const [movieHome, tvHome, animeHome] = await Promise.all([
-    buildMovieHome(c.env),
-    buildTvHome(c.env),
-    buildAnimeHome(c.env),
-  ]);
-
-  const payload = {
-    movie: movieHome,
-    tv:    tvHome,
-    anime: animeHome,
-  };
-
+  const payload = await buildGeneralHome(c.env);
   await kvSet(c.env, cacheKey, payload, TTL.home);
   return jsonResponse(payload);
 });

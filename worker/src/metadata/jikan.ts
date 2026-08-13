@@ -1,29 +1,39 @@
 // worker/src/metadata/jikan.ts
-// Jikan v4 — unofficial MyAnimeList REST API.
-// Used for: episode lists, OP/ED themes, filler guides.
-// No API key required. Rate limit: 3 req/sec, 60 req/min.
+// All Jikan v4 REST calls — routed through the Vercel proxy at PROXY_BASE_URL.
+// Direct calls from Cloudflare Workers hit the same orange-to-orange block as AniList.
+//
+// Proxy endpoint: GET ${PROXY_BASE_URL}/api/jikan/{path}
+// Auth header:    x-spun-proxy-secret: ${SPUN_PROXY_SECRET}
 
-const JIKAN_BASE = 'https://api.jikan.moe/v4';
+import type { Env } from '../types/env.js';
 
 // ─── HTTP helper ──────────────────────────────────────────────────────────────
 
-async function jikanFetch<T>(
-  path:   string,
-  params: Record<string, string | number> = {}
-): Promise<T | null> {
-  const url = new URL(`${JIKAN_BASE}${path}`);
-  for (const [k, v] of Object.entries(params)) {
-    url.searchParams.set(k, String(v));
-  }
+async function jikanGet<T>(env: Env, path: string): Promise<T | null> {
+  // Strip leading slash so we never get double slashes
+  const cleanPath = path.startsWith('/') ? path.slice(1) : path;
+  const url       = `${env.PROXY_BASE_URL}/api/jikan/${cleanPath}`;
 
   try {
-    const res = await fetch(url.toString(), {
-      headers: { Accept: 'application/json' },
+    const res = await fetch(url, {
+      headers: {
+        'x-spun-proxy-secret': env.SPUN_PROXY_SECRET ?? '',
+        Accept:                'application/json',
+      },
     });
-    if (res.status === 429) return null; // rate limited
-    if (!res.ok)            return null;
-    return res.json() as Promise<T>;
-  } catch {
+
+    if (res.status === 429) {
+      // Jikan rate-limits at 3 req/s and 60 req/min. Back off and return null.
+      console.warn('[Jikan] Rate limited — backing off');
+      return null;
+    }
+
+    if (!res.ok) return null;
+
+    const json = await res.json() as T;
+    return json;
+  } catch (err) {
+    console.error('[Jikan proxy fetch error]', err);
     return null;
   }
 }
@@ -31,143 +41,172 @@ async function jikanFetch<T>(
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface JikanEpisode {
-  mal_id:    number;
-  title:     string | null;
-  title_romaji?: string | null;
-  aired:     string | null;
-  filler:    boolean;
-  recap:     boolean;
-  duration?: string | null;
+  mal_id:       number;
+  title:        string  | null;
+  title_romaji: string  | null;
+  title_japanese: string | null;
+  aired:        string  | null;
+  filler:       boolean;
+  recap:        boolean;
+  forum_url:    string  | null;
 }
 
 export interface JikanTheme {
-  mal_id: number;
-  type:   'OP' | 'ED';
-  name:   string;
-  text:   string;
+  openings: string[];
+  endings:  string[];
 }
 
-export interface JikanAnime {
-  mal_id:   number;
-  title:    string;
-  episodes: number | null;
-  status:   string | null;
+export interface JikanAnimeDetail {
+  mal_id:    number;
+  title:     string;
+  episodes:  number | null;
+  themes:    JikanTheme;
 }
 
-// ─── Episode list ─────────────────────────────────────────────────────────────
-// Jikan paginates episodes at 100/page.
-// We fetch all pages and return the full flat list.
+// ─── Endpoints ────────────────────────────────────────────────────────────────
 
+/**
+ * Full episode list for an anime by MAL ID.
+ * Jikan paginates at 100 eps/page — we fetch all pages automatically.
+ */
 export async function getJikanEpisodes(
-  malId:   number,
-  page    = 1
-): Promise<{ episodes: JikanEpisode[]; hasNextPage: boolean; total: number }> {
-  const data = await jikanFetch<{
-    data:       JikanEpisode[];
-    pagination: { last_visible_page: number; has_next_page: boolean; items: { total: number } };
-  }>(`/anime/${malId}/episodes`, { page });
+  env:   Env,
+  malId: number
+): Promise<JikanEpisode[]> {
+  const all:     JikanEpisode[] = [];
+  let   page     = 1;
+  let   hasMore  = true;
 
-  return {
-    episodes:    data?.data              ?? [],
-    hasNextPage: data?.pagination?.has_next_page ?? false,
-    total:       data?.pagination?.items?.total  ?? 0,
-  };
-}
+  while (hasMore) {
+    const result = await jikanGet<{
+      data:       JikanEpisode[];
+      pagination: { has_next_page: boolean };
+    }>(env, `anime/${malId}/episodes?page=${page}`);
 
-export async function getAllJikanEpisodes(malId: number): Promise<JikanEpisode[]> {
-  const all:  JikanEpisode[] = [];
-  let   page = 1;
+    if (!result || !result.data?.length) break;
 
-  while (true) {
-    const { episodes, hasNextPage } = await getJikanEpisodes(malId, page);
-    all.push(...episodes);
-    if (!hasNextPage) break;
+    all.push(...result.data);
+    hasMore = result.pagination?.has_next_page ?? false;
     page++;
-    // Small delay to respect Jikan rate limit
-    await new Promise((r) => setTimeout(r, 350));
+
+    // Safety cap — no anime has more than 2000 episodes that Jikan tracks
+    if (page > 20) break;
   }
 
   return all;
 }
 
-// ─── Themes (OP/ED) ───────────────────────────────────────────────────────────
-
-export interface ParsedTheme {
-  title:    string;
-  artist:   string;
-  episodes: string;
-  type:     'OP' | 'ED';
-}
-
-export async function getJikanThemes(malId: number): Promise<ParsedTheme[]> {
-  const data = await jikanFetch<{
-    data: {
-      openings: string[];
-      endings:  string[];
-    }
-  }>(`/anime/${malId}/themes`);
-
-  if (!data?.data) return [];
-
-  const parse = (raw: string[], type: 'OP' | 'ED'): ParsedTheme[] =>
-    raw.map((entry) => {
-      // Format: '#1: "Title" by Artist (eps X-Y)'
-      const titleMatch   = entry.match(/"([^"]+)"/);
-      const artistMatch  = entry.match(/by ([^(]+)/);
-      const episodeMatch = entry.match(/\(eps? ([^)]+)\)/);
-
-      return {
-        title:    titleMatch?.[1]?.trim()   ?? entry,
-        artist:   artistMatch?.[1]?.trim()  ?? '',
-        episodes: episodeMatch?.[1]?.trim() ?? 'All',
-        type,
-      };
-    });
-
-  return [
-    ...parse(data.data.openings, 'OP'),
-    ...parse(data.data.endings,  'ED'),
-  ];
-}
-
-// ─── Filler guide ─────────────────────────────────────────────────────────────
-
-export interface FillerEntry {
-  number: number;
-  type:   'canon' | 'filler' | 'mixed';
-}
-
-export async function getJikanFillers(
+/**
+ * Single page of episodes — used when we only need a specific page,
+ * e.g. for the /info/:spunId/episodes endpoint with pagination.
+ */
+export async function getJikanEpisodesPage(
+  env:   Env,
   malId: number,
   page  = 1
-): Promise<{ fillers: FillerEntry[]; hasNextPage: boolean }> {
-  const data = await jikanFetch<{
-    data: Array<{
-      mal_id: number;
-      filler: boolean;
-      recap:  boolean;
-    }>;
+): Promise<{ episodes: JikanEpisode[]; hasNextPage: boolean }> {
+  const result = await jikanGet<{
+    data:       JikanEpisode[];
     pagination: { has_next_page: boolean };
-  }>(`/anime/${malId}/episodes`, { page });
-
-  const fillers: FillerEntry[] = (data?.data ?? []).map((ep, i) => ({
-    number: ep.mal_id,
-    type:   ep.filler ? 'filler' : ep.recap ? 'mixed' : 'canon',
-  }));
+  }>(env, `anime/${malId}/episodes?page=${page}`);
 
   return {
-    fillers,
-    hasNextPage: data?.pagination?.has_next_page ?? false,
+    episodes:    result?.data ?? [],
+    hasNextPage: result?.pagination?.has_next_page ?? false,
   };
 }
 
-// ─── Lookup MAL ID from title (fallback) ──────────────────────────────────────
+/**
+ * Opening and ending themes for an anime.
+ */
+export async function getJikanThemes(
+  env:   Env,
+  malId: number
+): Promise<{ openings: string[]; endings: string[] }> {
+  const result = await jikanGet<{
+    data: { openings: string[]; endings: string[] }
+  }>(env, `anime/${malId}/themes`);
 
-export async function searchJikan(query: string): Promise<JikanAnime | null> {
-  const data = await jikanFetch<{ data: JikanAnime[] }>('/anime', {
-    q:   query,
-    limit: 5,
-  });
+  return {
+    openings: result?.data?.openings ?? [],
+    endings:  result?.data?.endings  ?? [],
+  };
+}
 
-  return data?.data?.[0] ?? null;
+/**
+ * Parse Jikan's raw theme strings into structured objects.
+ * Jikan returns: "#1: \"Guren no Yumiya\" by Linked Horizon (eps 1-13)"
+ */
+export function parseThemeString(raw: string): {
+  title:    string;
+  artist:   string;
+  episodes: string;
+} {
+  // Strip the leading "#N: " ordinal if present
+  const stripped = raw.replace(/^#\d+:\s*/, '');
+
+  // Match `"Title" by Artist (eps X-Y)` or just `"Title" by Artist`
+  const match = stripped.match(/^"(.+?)"\s+by\s+(.+?)(?:\s+\(eps?\s*([^)]+)\))?$/i);
+  if (!match) {
+    return { title: stripped, artist: 'Unknown', episodes: '' };
+  }
+
+  return {
+    title:    match[1] ?? stripped,
+    artist:   match[2]?.trim() ?? 'Unknown',
+    episodes: match[3]?.trim() ?? '',
+  };
+}
+
+/**
+ * Filler episode guide.
+ */
+export async function getJikanFillers(
+  env:   Env,
+  malId: number
+): Promise<JikanEpisode[]> {
+  const all = await getJikanEpisodes(env, malId);
+  return all.filter((ep) => ep.filler || ep.recap);
+}
+
+/**
+ * Full episode guide with filler classification.
+ * Returns every episode with a canon/filler/mixed label.
+ */
+export async function getJikanFillerGuide(
+  env:   Env,
+  malId: number
+): Promise<Array<{ number: number; type: 'canon' | 'filler' | 'mixed' }>> {
+  const eps = await getJikanEpisodes(env, malId);
+  return eps.map((ep) => ({
+    number: ep.mal_id,
+    type:   ep.filler && ep.recap
+      ? 'mixed'
+      : ep.filler || ep.recap
+        ? 'filler'
+        : 'canon',
+  }));
+}
+
+/**
+ * Normalise a Jikan episode into the /info/:spunId/episodes shape.
+ */
+export function normalizeJikanEpisode(ep: JikanEpisode): {
+  number:    number;
+  season:    number;
+  title:     string | null;
+  overview:  string | null;
+  thumbnail: string | null;
+  runtime:   number | null;
+  air_date:  string | null;
+} {
+  return {
+    number:    ep.mal_id,
+    season:    1,                                    // anime is always season 1 in Spün
+    title:     ep.title ?? ep.title_romaji ?? null,
+    overview:  null,                                 // Jikan v4 doesn't return episode overviews
+    thumbnail: null,                                 // Jikan v4 doesn't return episode thumbnails
+    runtime:   null,
+    air_date:  ep.aired ?? null,
+  };
 }

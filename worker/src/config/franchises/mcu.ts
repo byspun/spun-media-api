@@ -1,0 +1,46 @@
+// worker/src/config/franchises/mcu.ts
+// MCU — all 38 films in canonical release/watch order.
+// Replace each spun_id placeholder with the real ID after searching the title in the API.
+
+import type { FranchiseEntry } from '../types.js';
+
+export const mcu: FranchiseEntry[] = [
+  { order: 1,  spun_id: 'iron-man-xxxxxx',                             relation: 'main',      note: 'Start here — Phase 1' },
+  { order: 2,  spun_id: 'the-incredible-hulk-xxxxxx',                  relation: 'main',      note: null },
+  { order: 3,  spun_id: 'iron-man-2-xxxxxx',                           relation: 'sequel',    note: null },
+  { order: 4,  spun_id: 'thor-xxxxxx',                                  relation: 'main',      note: null },
+  { order: 5,  spun_id: 'captain-america-the-first-avenger-xxxxxx',    relation: 'main',      note: null },
+  { order: 6,  spun_id: 'marvels-the-avengers-xxxxxx',                 relation: 'main',      note: 'Phase 1 finale' },
+  { order: 7,  spun_id: 'iron-man-3-xxxxxx',                           relation: 'sequel',    note: 'Phase 2 begins' },
+  { order: 8,  spun_id: 'thor-the-dark-world-xxxxxx',                  relation: 'sequel',    note: null },
+  { order: 9,  spun_id: 'captain-america-the-winter-soldier-xxxxxx',   relation: 'sequel',    note: null },
+  { order: 10, spun_id: 'guardians-of-the-galaxy-xxxxxx',              relation: 'main',      note: null },
+  { order: 11, spun_id: 'avengers-age-of-ultron-xxxxxx',               relation: 'sequel',    note: null },
+  { order: 12, spun_id: 'ant-man-xxxxxx',                              relation: 'main',      note: null },
+  { order: 13, spun_id: 'captain-america-civil-war-xxxxxx',            relation: 'sequel',    note: 'Phase 3 begins' },
+  { order: 14, spun_id: 'doctor-strange-xxxxxx',                       relation: 'main',      note: null },
+  { order: 15, spun_id: 'guardians-of-the-galaxy-vol-2-xxxxxx',        relation: 'sequel',    note: null },
+  { order: 16, spun_id: 'spider-man-homecoming-xxxxxx',                relation: 'main',      note: null },
+  { order: 17, spun_id: 'thor-ragnarok-xxxxxx',                        relation: 'sequel',    note: null },
+  { order: 18, spun_id: 'black-panther-xxxxxx',                        relation: 'main',      note: null },
+  { order: 19, spun_id: 'avengers-infinity-war-xxxxxx',                relation: 'sequel',    note: null },
+  { order: 20, spun_id: 'ant-man-and-the-wasp-xxxxxx',                 relation: 'sequel',    note: null },
+  { order: 21, spun_id: 'captain-marvel-xxxxxx',                       relation: 'main',      note: null },
+  { order: 22, spun_id: 'avengers-endgame-xxxxxx',                     relation: 'sequel',    note: 'Phase 3 finale' },
+  { order: 23, spun_id: 'spider-man-far-from-home-xxxxxx',             relation: 'sequel',    note: 'Phase 4 begins' },
+  { order: 24, spun_id: 'black-widow-xxxxxx',                          relation: 'main',      note: null },
+  { order: 25, spun_id: 'shang-chi-and-the-legend-of-the-ten-rings-xxxxxx', relation: 'main', note: null },
+  { order: 26, spun_id: 'eternals-xxxxxx',                             relation: 'main',      note: null },
+  { order: 27, spun_id: 'spider-man-no-way-home-xxxxxx',               relation: 'sequel',    note: null },
+  { order: 28, spun_id: 'doctor-strange-in-the-multiverse-of-madness-xxxxxx', relation: 'sequel', note: null },
+  { order: 29, spun_id: 'thor-love-and-thunder-xxxxxx',                relation: 'sequel',    note: null },
+  { order: 30, spun_id: 'black-panther-wakanda-forever-xxxxxx',        relation: 'sequel',    note: 'Phase 4 finale' },
+  { order: 31, spun_id: 'ant-man-and-the-wasp-quantumania-xxxxxx',     relation: 'sequel',    note: 'Phase 5 begins' },
+  { order: 32, spun_id: 'guardians-of-the-galaxy-vol-3-xxxxxx',        relation: 'sequel',    note: null },
+  { order: 33, spun_id: 'the-marvels-xxxxxx',                          relation: 'sequel',    note: null },
+  { order: 34, spun_id: 'captain-america-brave-new-world-xxxxxx',      relation: 'sequel',    note: 'Phase 5 continues' },
+  { order: 35, spun_id: 'thunderbolts-xxxxxx',                         relation: 'main',      note: 'Phase 5 finale' },
+  { order: 36, spun_id: 'fantastic-four-first-steps-xxxxxx',           relation: 'main',      note: 'Phase 6 begins' },
+  { order: 37, spun_id: 'spider-man-brand-new-day-xxxxxx',             relation: 'sequel',    note: 'Last solo film before Doomsday' },
+  { order: 38, spun_id: 'avengers-doomsday-xxxxxx',                    relation: 'sequel',    note: 'Phase 6 — Avengers finale' },
+];

@@ -25,6 +25,14 @@ export interface Env {
   // TasteDive similar content API
   TASTEDIVE_API_KEY: string;
 
+  // Vercel proxy for AniList + Jikan (bypasses CF orange-to-orange block)
+  // Set to your deployed Vercel project URL e.g. https://spun-anilist-proxy.vercel.app
+  PROXY_BASE_URL: string;
+
+  // Shared secret sent in x-spun-proxy-secret header to the Vercel proxy.
+  // Must match SPUN_PROXY_SECRET on the Vercel side.
+  SPUN_PROXY_SECRET: string;
+
   // Environment flag
   ENVIRONMENT: string;
 }
