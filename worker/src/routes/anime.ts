@@ -322,14 +322,26 @@ anime.get('/genre/:genre', async (c) => {
   const genreId  = c.req.param('genre');
   const page     = parseInt(c.req.query('page') ?? '1');
   const genreDef = getGenreById(genreId);
-  if (!genreDef?.anilist_genres?.[0]) {
-    return errorResponse('INVALID_GENRE', 'Genre not found or not available for anime.', 400);
+  
+  if (!genreDef) {
+    return errorResponse('INVALID_GENRE', 'Unknown genre.', 400);
   }
+
+  const anilistGenre = genreDef.anilist_genres?.[0];
+  const anilistTag   = genreDef.anilist_tags?.[0];
+  
+  if (!anilistGenre && !anilistTag) {
+    return errorResponse('INVALID_GENRE', 'Genre not available for anime.', 400);
+  }
+
   const cacheKey = CacheKeys.animeGenre(genreId, page);
   const cached   = await kvGet(c.env, cacheKey);
   if (cached) return jsonResponse(cached);
 
-  const media   = await getAnilistByGenre(c.env, genreDef.anilist_genres[0], page);
+  const media = anilistTag
+    ? await getAnilistByTag(c.env, anilistTag, page)
+    : await getAnilistByGenre(c.env, anilistGenre!, page);
+
   const results = await toItems(c.env, media);
   const payload = { genre: genreId, page, has_more: media.length >= 30, results };
   await kvSet(c.env, cacheKey, payload, TTL.discover);

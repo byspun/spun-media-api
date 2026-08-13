@@ -80,6 +80,7 @@ const MEDIA_FIELDS = `
   trailer { id site }
   season
   seasonYear
+  nextAiringEpisode { airingAt timeUntilAiring episode }
 `;
 
 const RANKED_FIELDS = `
@@ -98,7 +99,7 @@ export async function getAnilistMedia(env: Env, anilistId: number): Promise<AniL
     query($id: Int) {
       Media(id: $id, type: ANIME) {
         ${MEDIA_FIELDS}
-        characters(role: MAIN, sort: RELEVANCE, perPage: 15) {
+        characters(role: MAIN, sort: [RELEVANCE, ID], perPage: 15) {
           edges {
             node { name { full } image { large } }
             voiceActors(language: JAPANESE) { name { full } image { large } }
@@ -106,7 +107,7 @@ export async function getAnilistMedia(env: Env, anilistId: number): Promise<AniL
         }
         relations {
           edges {
-            relationType(version: 2)
+            relationType
             node {
               id
               title { english romaji userPreferred }
@@ -119,7 +120,7 @@ export async function getAnilistMedia(env: Env, anilistId: number): Promise<AniL
             }
           }
         }
-        recommendations(perPage: 10, sort: RATING_DESC) {
+        recommendations(perPage: 10, sort: [RATING_DESC, ID]) {
           nodes {
             mediaRecommendation {
               id

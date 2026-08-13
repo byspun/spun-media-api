@@ -372,9 +372,16 @@ discover.get('/:type', async (c) => {
       if (!genreDef) return errorResponse('INVALID_GENRE', 'Unknown genre.', 400);
 
       const anilistGenre = genreDef.anilist_genres?.[0];
-      if (!anilistGenre) return errorResponse('INVALID_GENRE', 'Genre not available for anime.', 400);
+      const anilistTag   = genreDef.anilist_tags?.[0];
+      
+      if (!anilistGenre && !anilistTag) {
+        return errorResponse('INVALID_GENRE', 'Genre not available for anime.', 400);
+      }
 
-      const media = await getAnilistByGenre(c.env, anilistGenre, page);
+      const media = anilistTag
+        ? await getAnilistByTag(c.env, anilistTag, page)
+        : await getAnilistByGenre(c.env, anilistGenre!, page);
+
       const items = await Promise.all(
         media.map(async (m) => {
           const title = anilistTitle(m);
