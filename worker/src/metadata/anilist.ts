@@ -34,17 +34,24 @@ async function anilistQuery<T>(
       },
       body: JSON.stringify({ query, variables }),
     });
+    const text = await res.text();
     if (!res.ok) {
-      const text = await res.text();
       const msg = `[AniList Proxy] HTTP ${res.status}: ${text.slice(0, 100)}`;
       console.error(msg);
-      throw new Error(msg);
+      return null;
     }
-    const json = await res.json() as { data?: T; errors?: Array<{ message: string }> };
+
+    let json: any;
+    try {
+      json = JSON.parse(text);
+    } catch (e) {
+      console.error(`[AniList Proxy] Non-JSON response: ${text.slice(0, 100)}`);
+      return null;
+    }
+
     if (json.errors?.length) {
-      const msg = `[AniList GraphQL Error] ${json.errors.map((e) => e.message).join(', ')}`;
-      console.error(msg);
-      throw new Error(msg);
+      console.error('[AniList GraphQL Error]', json.errors.map((e: any) => e.message).join(', '));
+      return null;
     }
     return json.data ?? null;
   } catch (err) {
@@ -66,7 +73,6 @@ const MEDIA_FIELDS = `
   bannerImage
   averageScore
   genres
-  tags(sort: RANK_DESC) { name isMediaSpoiler rank }
   startDate { year month day }
   description(asHtml: false)
   studios(isMain: true) { nodes { name isAnimationStudio } }
@@ -74,7 +80,6 @@ const MEDIA_FIELDS = `
   trailer { id site }
   season
   seasonYear
-  nextAiringEpisode { episode airingAt timeUntilAiring }
 `;
 
 const RANKED_FIELDS = `

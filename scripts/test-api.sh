@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
 BASE="https://spun-media-api.heisdanny64.workers.dev/v1"
-OUT="$HOME/storage/downloads/spun-api-test-results.json"
-TMP="$HOME/storage/downloads/spun-api-tmp.ndjson"
+OUT="/home/ubuntu/spun-api-test-results.json"
+TMP="/home/ubuntu/spun-api-tmp.ndjson"
 PASS=0
 FAIL=0
 
@@ -59,11 +59,11 @@ call "Health" "$BASE/health"
 
 echo ""
 echo "▶  Search"
-call "Search all — dune"               "$BASE/search?q=dune"
-call "Search movie — inception"        "$BASE/search/movie?q=inception"
-call "Search TV — breaking bad"        "$BASE/search/tv?q=breaking+bad"
-call "Search anime — attack on titan"  "$BASE/search/anime?q=attack+on+titan"
-call "Search suggestions — one piece"  "$BASE/search/suggestions?q=one+piece"
+call "Search all — oppenheimer"        "$BASE/search?q=oppenheimer"
+call "Search movie — interstellar"     "$BASE/search/movie?q=interstellar"
+call "Search TV — succession"          "$BASE/search/tv?q=succession"
+call "Search anime — jujutsu kaisen"   "$BASE/search/anime?q=jujutsu+kaisen"
+call "Search suggestions — naruto"     "$BASE/search/suggestions?q=naruto"
 
 echo ""
 echo "▶  Resolve"
@@ -73,9 +73,9 @@ call "Resolve by AniList — Cowboy Bebop" "$BASE/utility/resolve?anilist_id=1"
 
 echo ""
 echo "▶  Fetching spun_ids for info tests..."
-MOVIE_ID=$(curl -s "$BASE/search/movie?q=inception" | jq -r '.results[0].spun_id // empty' 2>/dev/null)
-TV_ID=$(curl -s "$BASE/search/tv?q=breaking+bad" | jq -r '.results[0].spun_id // empty' 2>/dev/null)
-ANIME_ID=$(curl -s "$BASE/search/anime?q=fullmetal+alchemist+brotherhood" | jq -r '.results[0].spun_id // empty' 2>/dev/null)
+MOVIE_ID=$(curl -s "$BASE/search/movie?q=interstellar" | jq -r '.results[0].spun_id // empty' 2>/dev/null)
+TV_ID=$(curl -s "$BASE/search/tv?q=succession" | jq -r '.results[0].spun_id // empty' 2>/dev/null)
+ANIME_ID=$(curl -s "$BASE/search/anime?q=jujutsu+kaisen" | jq -r '.results[0].spun_id // empty' 2>/dev/null)
 
 echo "  → Movie spun_id: ${MOVIE_ID:-not found}"
 echo "  → TV spun_id:    ${TV_ID:-not found}"

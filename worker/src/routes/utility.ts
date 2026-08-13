@@ -70,23 +70,25 @@ utility.get('/health', async (c) => {
     const cached   = await kvGet(c.env, cacheKey);
     if (cached) return jsonResponse(cached);
 
-    const [tmdbOk, anilistOk, jikanOk, providerStatus] = await Promise.all([
+    const baseUrl = c.env.PROXY_BASE_URL.replace(/\/$/, '');
+
+    const [tmdbRes, anilistRes, jikanRes, providerStatus] = await Promise.all([
       fetch('https://api.themoviedb.org/3/configuration', {
         headers: { Authorization: `Bearer ${c.env.TMDB_BEARER_TOKEN}` },
-      }).then((r) => r.ok).catch(() => false),
+      }).catch(() => null),
 
-      fetch(`${c.env.PROXY_BASE_URL}/api/anilist`, {
+      fetch(`${baseUrl}/api/anilist`, {
         method:  'POST',
         headers: {
           'Content-Type':        'application/json',
           'x-spun-proxy-secret': c.env.SPUN_PROXY_SECRET ?? '',
         },
         body: JSON.stringify({ query: '{ Page(page:1,perPage:1) { media(type:ANIME) { id } } }' }),
-      }).then((r) => r.ok).catch(() => false),
+      }).catch(() => null),
 
-      fetch(`${c.env.PROXY_BASE_URL}/api/jikan/anime/1`, {
+      fetch(`${baseUrl}/api/jikan/anime/1`, {
         headers: { 'x-spun-proxy-secret': c.env.SPUN_PROXY_SECRET ?? '' },
-      }).then((r) => r.ok).catch(() => false),
+      }).catch(() => null),
 
       (async (): Promise<string> => {
         try {
@@ -109,6 +111,10 @@ utility.get('/health', async (c) => {
         }
       })(),
     ]);
+
+    const tmdbOk    = tmdbRes?.ok ?? false;
+    const anilistOk = anilistRes?.ok ?? false;
+    const jikanOk   = jikanRes?.ok ?? false;
 
     const allOk = tmdbOk && anilistOk && jikanOk;
     const overallStatus = allOk ? 'ok' : 'degraded';

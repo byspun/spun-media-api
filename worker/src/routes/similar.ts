@@ -9,7 +9,7 @@ import type { Env } from '../types/env.js';
 import type { ContentItem } from '../types/index.js';
 import { kvGet, kvSet, CacheKeys, TTL } from '../cache.js';
 import { getBySpunId, resolveFromTmdb, resolveFromAnilist } from '../identity/resolver.js';
-import { searchTmdb, tmdbPoster, extractYear } from '../metadata/tmdb.js';
+import { searchTmdb, tmdbPoster, extractYear, tmdbFetch } from '../metadata/tmdb.js';
 import { getAnilistMedia, anilistTitle } from '../metadata/anilist.js';
 import { anilistToItem, tmdbResultToItem, jsonResponse, errorResponse } from '../normalizer.js';
 
@@ -117,18 +117,29 @@ similar.get('/movie/:spunId', async (c) => {
     return errorResponse('INVALID_TYPE', 'This endpoint is for movies only.', 400);
   }
 
-  const tasteResults = await fetchTasteDive(
+  let tasteResults = await fetchTasteDive(
     c.env,
     row.title,
     'movies'
   );
 
-  const items = await Promise.all(
+  let items = await Promise.all(
     tasteResults.map((r) => tasteDiveToItem(c.env, r, 'movie'))
   );
 
-  const results = items.filter((i): i is ContentItem => i !== null);
-  const payload = { spun_id: spunId, source: 'tastedive', results };
+  let results = items.filter((i): i is ContentItem => i !== null);
+  let source  = 'tastedive';
+
+  // Fallback to TMDB recommendations if TasteDive returns nothing
+  if (results.length === 0 && row.tmdb_id) {
+    const tmdbRecs = await tmdbFetch<{ results: any[] }>(c.env, `/movie/${row.tmdb_id}/recommendations`);
+    if (tmdbRecs?.results?.length) {
+      results = tmdbRecs.results.slice(0, 20).map(r => tmdbResultToItem(r, `movie-${r.id}`, 'movie'));
+      source  = 'tmdb';
+    }
+  }
+
+  const payload = { spun_id: spunId, source, results };
   await kvSet(c.env, cacheKey, payload, TTL.metadata);
   return jsonResponse(payload);
 });
@@ -147,18 +158,29 @@ similar.get('/tv/:spunId', async (c) => {
     return errorResponse('INVALID_TYPE', 'This endpoint is for TV shows only.', 400);
   }
 
-  const tasteResults = await fetchTasteDive(
+  let tasteResults = await fetchTasteDive(
     c.env,
     row.title,
     'shows'
   );
 
-  const items = await Promise.all(
+  let items = await Promise.all(
     tasteResults.map((r) => tasteDiveToItem(c.env, r, 'tv'))
   );
 
-  const results = items.filter((i): i is ContentItem => i !== null);
-  const payload = { spun_id: spunId, source: 'tastedive', results };
+  let results = items.filter((i): i is ContentItem => i !== null);
+  let source  = 'tastedive';
+
+  // Fallback to TMDB recommendations if TasteDive returns nothing
+  if (results.length === 0 && row.tmdb_id) {
+    const tmdbRecs = await tmdbFetch<{ results: any[] }>(c.env, `/tv/${row.tmdb_id}/recommendations`);
+    if (tmdbRecs?.results?.length) {
+      results = tmdbRecs.results.slice(0, 20).map(r => tmdbResultToItem(r, `tv-${r.id}`, 'tv'));
+      source  = 'tmdb';
+    }
+  }
+
+  const payload = { spun_id: spunId, source, results };
   await kvSet(c.env, cacheKey, payload, TTL.metadata);
   return jsonResponse(payload);
 });
