@@ -108,6 +108,37 @@ v1.get('/studios', (c) => {
 
 app.route('/v1', v1);
 
+// ─── Cache Warming (Manual Cron Trigger) ──────────────────────────────────────
+
+app.get('/_warm-cache', async (c) => {
+  const secret = c.req.header('X-Spun-Secret');
+  if (!secret || secret !== c.env.X_SPUN_SECRET) {
+    return errorResponse('UNAUTHORIZED', 'Unauthorized', 401);
+  }
+
+  const type = c.req.query('type') || 'all';
+  
+  switch (type) {
+    case 'movie':
+      c.executionCtx.waitUntil(buildAndCacheMovieHome(c.env));
+      break;
+    case 'tv':
+      c.executionCtx.waitUntil(buildAndCacheTvHome(c.env));
+      break;
+    case 'anime':
+      c.executionCtx.waitUntil(buildAndCacheAnimeHome(c.env));
+      break;
+    case 'all':
+    default:
+      c.executionCtx.waitUntil(buildAndCacheGeneralHome(c.env));
+  }
+
+  return c.json({ 
+    success: true, 
+    message: `Cache warming triggered for type: ${type}. It will run in the background.` 
+  });
+});
+
 // ─── Root ─────────────────────────────────────────────────────────────────────
 
 app.get('/', (c) => {
