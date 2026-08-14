@@ -106,3 +106,73 @@ export function findFranchiseByPrimaryId(
 
   return null;
 }
+
+export interface CuratedFranchise {
+  id:         string;
+  name:       string;
+  type:       FranchiseDefinition['type'];
+  entries:    FranchiseEntry[];
+}
+
+function normalizeFranchiseReference(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+export function listCuratedFranchises(): CuratedFranchise[] {
+  return Object.entries(FRANCHISE_REGISTRY).map(([id, franchise]) => ({
+    id,
+    name:    franchise.name,
+    type:    franchise.type,
+    entries: [...franchise.entries].sort((a, b) => a.order - b.order),
+  }));
+}
+
+export function getCuratedFranchise(reference: string): CuratedFranchise | null {
+  const normalized = normalizeFranchiseReference(reference);
+
+  for (const [id, franchise] of Object.entries(FRANCHISE_REGISTRY)) {
+    if (id === normalized || normalizeFranchiseReference(franchise.name) === normalized) {
+      return {
+        id,
+        name:    franchise.name,
+        type:    franchise.type,
+        entries: [...franchise.entries].sort((a, b) => a.order - b.order),
+      };
+    }
+  }
+
+  return null;
+}
+
+export interface CuratedFranchiseEntry extends FranchiseEntry {
+  franchise_id: string;
+  content_type: FranchiseDefinition['type'];
+}
+
+export function getUniqueCuratedFranchiseEntries(
+  reference?: string
+): CuratedFranchiseEntry[] {
+  const franchises = reference
+    ? [getCuratedFranchise(reference)].filter((franchise): franchise is CuratedFranchise => franchise !== null)
+    : listCuratedFranchises();
+  const unique = new Map<string, CuratedFranchiseEntry>();
+
+  for (const franchise of franchises) {
+    for (const entry of franchise.entries) {
+      if (!unique.has(entry.spun_id)) {
+        unique.set(entry.spun_id, {
+          ...entry,
+          franchise_id: franchise.id,
+          content_type: franchise.type,
+        });
+      }
+    }
+  }
+
+  return [...unique.values()];
+}

@@ -24,6 +24,7 @@ import streamRoute    from './routes/stream.js';
 import downloadRoute  from './routes/download.js';
 import subtitlesRoute from './routes/subtitles.js';
 import utilityRoute   from './routes/utility.js';
+import franchiseRoute from './routes/franchise.js';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -31,7 +32,7 @@ const app = new Hono<{ Bindings: Env }>();
 
 app.use('*', cors({
   origin:          '*',
-  allowMethods:    ['GET', 'OPTIONS'],
+  allowMethods:    ['GET', 'POST', 'OPTIONS'],
   allowHeaders:    ['Content-Type', 'Authorization', 'X-Spun-Secret'],
   exposeHeaders:   ['X-Cache', 'X-Response-Time'],
   maxAge:          86400,
@@ -69,6 +70,7 @@ v1.route('/stream',     streamRoute);
 v1.route('/download',   downloadRoute);
 v1.route('/subtitles',  subtitlesRoute);
 v1.route('/utility',    utilityRoute);
+v1.route('/franchise',  franchiseRoute);
 
 // ─── Home Build — Triggers homepage snapshot ──────────────────────────────────
 
