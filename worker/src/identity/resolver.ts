@@ -70,6 +70,27 @@ export async function getByTmdbId(
 
 // ─── Lookup by AniList ID ─────────────────────────────────────────────────────
 
+export async function getByMalId(
+  env:   Env,
+  malId: number,
+): Promise<MediaTitleRow | null> {
+  const cacheKey = `row:mal:${malId}`;
+  const cached = await kvGet<MediaTitleRow>(env, cacheKey);
+  if (cached) return cached;
+
+  const sql = getDb(env);
+  const rows = await sql`
+    SELECT * FROM media_titles
+    WHERE mal_id = ${malId} AND content_type = 'anime'
+    LIMIT 1
+  `;
+  if (!rows.length) return null;
+
+  const row = rows[0] as MediaTitleRow;
+  await kvSet(env, cacheKey, row, TTL.idMap);
+  return row;
+}
+
 export async function getByAnilistId(
   env:       Env,
   anilistId: number
@@ -82,6 +103,27 @@ export async function getByAnilistId(
   const rows = await sql`
     SELECT * FROM media_titles
     WHERE anilist_id = ${anilistId} AND content_type = 'anime'
+    LIMIT 1
+  `;
+  if (!rows.length) return null;
+
+  const row = rows[0] as MediaTitleRow;
+  await kvSet(env, cacheKey, row, TTL.idMap);
+  return row;
+}
+
+export async function getByTvdbId(
+  env:    Env,
+  tvdbId: number,
+): Promise<MediaTitleRow | null> {
+  const cacheKey = `row:tvdb:${tvdbId}`;
+  const cached = await kvGet<MediaTitleRow>(env, cacheKey);
+  if (cached) return cached;
+
+  const sql = getDb(env);
+  const rows = await sql`
+    SELECT * FROM media_titles
+    WHERE tvdb_id = ${tvdbId} AND content_type = 'tv'
     LIMIT 1
   `;
   if (!rows.length) return null;
@@ -203,6 +245,47 @@ export async function resolveFromAnilist(
     kvSet(env, `row:anilist:${anilistId}`, row, TTL.idMap),
   ]);
 
+  return row;
+}
+
+// ─── Register or retrieve — MAL anime ─────────────────────────────────────────
+
+export async function resolveFromMal(
+  env:   Env,
+  malId: number,
+  title: string,
+  params: {
+    anilistId?: number | null;
+    tmdbId?: number | null;
+  } = {},
+): Promise<MediaTitleRow> {
+  const existing = await getByMalId(env, malId);
+  if (existing) return existing;
+
+  const spunId = await makeSpunId(title, 'anime', malId);
+  const slug = makeSlug(title);
+  const sql = getDb(env);
+  const rows = await sql`
+    INSERT INTO media_titles (
+      spun_id, slug, content_type, title,
+      anilist_id, tmdb_id, mal_id
+    )
+    VALUES (
+      ${spunId}, ${slug}, 'anime', ${title},
+      ${params.anilistId ?? null},
+      ${params.tmdbId ?? null},
+      ${malId}
+    )
+    ON CONFLICT (spun_id) DO UPDATE
+      SET last_accessed_at = NOW()
+    RETURNING *
+  `;
+
+  const row = rows[0] as MediaTitleRow;
+  await Promise.all([
+    kvSet(env, `row:${spunId}`, row, TTL.idMap),
+    kvSet(env, `row:mal:${malId}`, row, TTL.idMap),
+  ]);
   return row;
 }
 

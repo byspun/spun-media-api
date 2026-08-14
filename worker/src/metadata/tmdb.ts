@@ -234,6 +234,24 @@ export async function getTmdbEpisodeDetail(
 
 // ─── External IDs ─────────────────────────────────────────────────────────────
 
+export async function findTmdbByExternalId(
+  env: Env,
+  externalId: string,
+  source: 'imdb_id' | 'tvdb_id',
+): Promise<TmdbSearchResult[]> {
+  const data = await tmdbFetch<{
+    movie_results?: Array<Omit<TmdbSearchResult, 'media_type'>>;
+    tv_results?: Array<Omit<TmdbSearchResult, 'media_type'>>;
+  }>(env, `/find/${encodeURIComponent(externalId)}`, {
+    external_source: source,
+  });
+
+  return [
+    ...(data?.movie_results ?? []).map((item) => ({ ...item, media_type: 'movie' as const })),
+    ...(data?.tv_results ?? []).map((item) => ({ ...item, media_type: 'tv' as const })),
+  ];
+}
+
 export async function getTmdbExternalIds(
   env:       Env,
   tmdbId:    number,

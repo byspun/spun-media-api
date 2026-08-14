@@ -297,13 +297,7 @@ export interface FranchiseEntry {
 
 // ─── Utility types ────────────────────────────────────────────────────────────
 
-export interface ResolveResponse {
-  spun_id: string;
-  type:    string;
-  title:   string;
-  year:    number | null;
-  poster:  string | null;
-}
+export type ResolveResponse = ContentItem;
 
 export interface HealthResponse {
   status:   'ok' | 'degraded' | 'down';

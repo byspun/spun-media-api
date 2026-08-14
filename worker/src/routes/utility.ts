@@ -1,16 +1,17 @@
 // worker/src/routes/utility.ts
 // Utility endpoints:
-//   GET /resolve?tmdb_id=&type=  OR  ?imdb_id=  OR  ?anilist_id=  OR  ?mal_id=
+//   GET /resolve                         — list supported identifier namespaces
+//   GET /resolve/:namespace?id=           — resolve and register an identifier
 //   GET /health
 //   GET /proxy?url=              — HLS/M3U8 proxy (delegated to proxy.ts)
 
 import { Hono } from 'hono';
 import type { Env } from '../types/env.js';
 import {
-  getByTmdbId,
-  getByAnilistId,
-  getByImdbId,
-} from '../identity/resolver.js';
+  RESOLVE_NAMESPACES,
+  ResolveFailure,
+  resolveIdentifier,
+} from '../resolve.js';
 import { getDb } from '../db.js';
 import { kvGet, kvSet, CacheKeys, TTL } from '../cache.js';
 import { jsonResponse, errorResponse } from '../normalizer.js';
@@ -18,47 +19,28 @@ import { proxyHls } from '../proxy.js';
 
 const utility = new Hono<{ Bindings: Env }>();
 
-// ─── GET /resolve ─────────────────────────────────────────────────────────────
+// ─── Resolve namespace listing and lazy resolution ─────────────────────────────
 
-utility.get('/resolve', async (c) => {
-  const tmdbId    = c.req.query('tmdb_id');
-  const imdbId    = c.req.query('imdb_id');
-  const anilistId = c.req.query('anilist_id');
-  const malId     = c.req.query('mal_id');
-  const type      = c.req.query('type') as 'movie' | 'tv' | undefined;
+utility.get('/resolve', (_c) => {
+  return jsonResponse({ supported: RESOLVE_NAMESPACES });
+});
 
-  let row = null;
+utility.get('/resolve/:namespace', async (c) => {
+  const namespace = c.req.param('namespace');
+  const id = c.req.query('id') ?? '';
+  const requestedType = c.req.query('type');
 
-  if (tmdbId && type) {
-    row = await getByTmdbId(c.env, parseInt(tmdbId), type);
-  } else if (imdbId) {
-    row = await getByImdbId(c.env, imdbId);
-  } else if (anilistId) {
-    row = await getByAnilistId(c.env, parseInt(anilistId));
-  } else if (malId) {
-    // MAL ID lookup via DB
-    const sql  = getDb(c.env);
-    const rows = await sql`
-      SELECT * FROM media_titles WHERE mal_id = ${parseInt(malId)} LIMIT 1
-    `;
-    row = rows[0] ?? null;
-  } else {
-    return errorResponse(
-      'MISSING_PARAMS',
-      'Provide one of: tmdb_id+type, imdb_id, anilist_id, mal_id',
-      400
-    );
+  try {
+    const item = await resolveIdentifier(c.env, namespace, id, requestedType);
+    return jsonResponse(item);
+  } catch (error) {
+    if (error instanceof ResolveFailure) {
+      return errorResponse(error.code, error.message, error.status);
+    }
+
+    console.error('[Resolve] Registration or metadata error:', error);
+    return errorResponse('RESOLVE_REGISTRATION_FAILED', 'Resolution failed.', 500);
   }
-
-  if (!row) return errorResponse('NOT_FOUND', 'No title found for the given ID.', 404);
-
-  return jsonResponse({
-    spun_id: row.spun_id,
-    type:    row.content_type,
-    title:   row.title,
-    year:    null, // Caller can fetch full info via /info/:spunId
-    poster:  null,
-  });
 });
 
 // ─── GET /health ──────────────────────────────────────────────────────────────

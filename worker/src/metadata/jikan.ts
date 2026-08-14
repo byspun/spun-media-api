@@ -62,10 +62,26 @@ export interface JikanTheme {
 }
 
 export interface JikanAnimeDetail {
-  mal_id:    number;
-  title:     string;
-  episodes:  number | null;
-  themes:    JikanTheme;
+  mal_id:        number;
+  title:         string;
+  title_english?: string | null;
+  title_japanese?: string | null;
+  type?:         string | null;
+  episodes:      number | null;
+  score?:        number | null;
+  year?:         number | null;
+  aired?:        { from: string | null };
+  images?:       { jpg?: { image_url?: string | null; large_image_url?: string | null } };
+  synopsis?:     string | null;
+  themes:        JikanTheme;
+}
+
+export async function getJikanAnimeDetail(
+  env: Env,
+  malId: number,
+): Promise<JikanAnimeDetail | null> {
+  const result = await jikanGet<{ data: JikanAnimeDetail }>(env, `anime/${malId}`);
+  return result?.data ?? null;
 }
 
 // ─── Endpoints ────────────────────────────────────────────────────────────────

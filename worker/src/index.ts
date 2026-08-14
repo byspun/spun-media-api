@@ -126,6 +126,11 @@ v1.get('/resolve', (c) => {
   const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
   return c.redirect(`/v1/utility/resolve${qs}`, 307);
 });
+v1.get('/resolve/:namespace', (c) => {
+  const namespace = c.req.param('namespace');
+  const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
+  return c.redirect(`/v1/utility/resolve/${namespace}${qs}`, 307);
+});
 v1.get('/health', (c) => c.redirect('/v1/utility/health', 307));
 v1.get('/proxy',  (c) => {
   const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';

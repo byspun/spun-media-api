@@ -25,6 +25,17 @@ export type SpunErrorCode =
   | 'SUBTITLE_ARCHIVE_INVALID'
   | 'SUBTITLE_TRACK_NOT_FOUND'
   | 'SUBTITLE_CONVERSION_FAILED'
+  | 'RESOLVE_NAMESPACE_UNSUPPORTED'
+  | 'RESOLVE_IDENTIFIER_REQUIRED'
+  | 'RESOLVE_IDENTIFIER_INVALID'
+  | 'RESOLVE_NAMESPACE_TYPE_MISMATCH'
+  | 'RESOLVE_CONTENT_NOT_FOUND'
+  | 'RESOLVE_AMBIGUOUS'
+  | 'RESOLVE_METADATA_UNAVAILABLE'
+  | 'RESOLVE_METADATA_TIMEOUT'
+  | 'RESOLVE_REGISTRATION_FAILED'
+  | 'RESOLVE_CONFLICT'
+  | 'RESOLVE_UNSUPPORTED_RESULT'
   | 'INTERNAL_ERROR';
 
 export interface SpunErrorDetail {
@@ -124,6 +135,61 @@ export const ERROR_REGISTRY: Record<SpunErrorCode, Omit<SpunErrorDetail, 'code'>
     error:       'Subtitle preparation failed',
     description: 'We found the subtitle track but could not convert it to a format playable in your browser.',
     action:      'This is a technical issue with the source file. Please try a different track.'
+  },
+  RESOLVE_NAMESPACE_UNSUPPORTED: {
+    error:       'Identifier type not supported',
+    description: 'The requested identifier namespace is not currently supported by Spün Media API.',
+    action:      'Request one of the supported identifier namespaces from GET /v1/resolve.'
+  },
+  RESOLVE_IDENTIFIER_REQUIRED: {
+    error:       'Identifier required',
+    description: 'No identifier was provided for resolution.',
+    action:      'Provide an id query parameter with the requested identifier.'
+  },
+  RESOLVE_IDENTIFIER_INVALID: {
+    error:       'Invalid identifier',
+    description: 'The supplied identifier is not valid for the requested identifier namespace.',
+    action:      'Check the identifier format and try the request again.'
+  },
+  RESOLVE_NAMESPACE_TYPE_MISMATCH: {
+    error:       'Identifier type mismatch',
+    description: 'The resolved title is not compatible with the requested content type.',
+    action:      'Use an identifier from the supported content type for this namespace.'
+  },
+  RESOLVE_CONTENT_NOT_FOUND: {
+    error:       'Content not found',
+    description: 'The identifier was processed successfully, but no matching title was found.',
+    action:      'Verify the identifier or try another supported identifier namespace.'
+  },
+  RESOLVE_AMBIGUOUS: {
+    error:       'Multiple matches found',
+    description: 'The identifier returned more than one possible title and could not be resolved safely.',
+    action:      'Use a more specific identifier or provide the correct identifier namespace.'
+  },
+  RESOLVE_METADATA_UNAVAILABLE: {
+    error:       'Metadata temporarily unavailable',
+    description: 'The title could not be resolved because the metadata service is temporarily unavailable.',
+    action:      'Please try again in a few moments.'
+  },
+  RESOLVE_METADATA_TIMEOUT: {
+    error:       'Metadata request timed out',
+    description: 'The metadata resolution request took too long to complete.',
+    action:      'Please try again in a few moments.'
+  },
+  RESOLVE_REGISTRATION_FAILED: {
+    error:       'Catalog registration failed',
+    description: 'The title was found, but Spün could not register its identity in the catalog.',
+    action:      'Please try again later.'
+  },
+  RESOLVE_CONFLICT: {
+    error:       'Resolution conflict',
+    description: 'Another catalog operation conflicted with this resolution request.',
+    action:      'Please retry the request.'
+  },
+  RESOLVE_UNSUPPORTED_RESULT: {
+    error:       'Unsupported metadata result',
+    description: 'The resolved title could not be normalized into a supported Spün content model.',
+    action:      'Try another identifier or namespace.'
   },
   INTERNAL_ERROR: {
     error:       'Unexpected error',

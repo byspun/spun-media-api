@@ -408,6 +408,7 @@ export function errorResponse(
   if (code === 'SUBTITLE_ARCHIVE_INVALID') mappedCode = 'SUBTITLE_ARCHIVE_INVALID';
   if (code === 'SUBTITLE_TRACK_NOT_FOUND') mappedCode = 'SUBTITLE_TRACK_NOT_FOUND';
   if (code === 'SUBTITLE_CONVERSION_FAILED') mappedCode = 'SUBTITLE_CONVERSION_FAILED';
+  if (code.startsWith('RESOLVE_')) mappedCode = code;
 
   const detail = getError(mappedCode);
 
