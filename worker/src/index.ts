@@ -131,10 +131,6 @@ v1.get('/proxy',  (c) => {
   const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
   return c.redirect(`/v1/utility/proxy${qs}`, 307);
 });
-v1.get('/subtitle-proxy', (c) => {
-  const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
-  return c.redirect(`/v1/proxy/subtitles${qs}`, 307);
-});
 
 // Trending/popular/new/genres/studios flat aliases inside /v1
 v1.get('/trending', (c) => {

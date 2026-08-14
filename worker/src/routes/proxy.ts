@@ -8,6 +8,7 @@ import type { Env } from '../types/env.js';
 import { errorResponse } from '../normalizer.js';
 import { readSubtitleProxyToken } from '../proxy-token.js';
 import { srtToVtt } from '../utils/srtToVtt.js';
+import { proxyHls } from '../proxy.js';
 
 const proxy = new Hono<{ Bindings: Env }>();
 
@@ -139,6 +140,10 @@ function decodeSubtitle(bytes: Uint8Array): string {
 
   return new TextDecoder('utf-8').decode(bytes).replace(/^\uFEFF/, '');
 }
+
+// GET /v1/proxy/stream?url=<encoded-stream-url>
+// Canonical HLS proxy route. Existing MP4/DASH playback remains direct.
+proxy.get('/stream', async (c) => proxyHls(c.req.raw, c.env));
 
 // GET /v1/proxy/subtitles?t=<encrypted-token>
 // Browser-playable endpoint. It never accepts raw archive URLs.

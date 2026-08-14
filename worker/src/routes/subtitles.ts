@@ -108,7 +108,7 @@ subtitles.get('/:spunId', async (c) => {
     const tracks = await Promise.all(
       data.subtitles
         .slice(0, 5)
-        .map(async (item, index) => {
+        .map(async (item) => {
           const archiveUrl = toArchiveUrl(item);
           if (!archiveUrl) return null;
 
@@ -121,7 +121,6 @@ subtitles.get('/:spunId', async (c) => {
           );
 
           return {
-            id: `subtitle-${index + 1}`,
             language,
             language_code: languageCode,
             label: language,

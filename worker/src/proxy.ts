@@ -7,8 +7,6 @@
 //   - M3U8 files: rewrite all relative + absolute URLs through proxy
 //   - Everything else: stream through with correct headers (Range support)
 
-const PROXY_PATH = '/proxy';
-
 // ─── Determine if a URL is an M3U8 manifest ──────────────────────────────────
 
 function isM3u8(url: string, contentType: string): boolean {
@@ -36,7 +34,7 @@ function resolveUrl(base: string, relative: string): string {
 // ─── Build a proxied URL ──────────────────────────────────────────────────────
 
 function proxyUrl(requestUrl: URL, targetUrl: string): string {
-  const base = `${requestUrl.origin}${PROXY_PATH}`;
+  const base = `${requestUrl.origin}${requestUrl.pathname}`;
   return `${base}?url=${encodeURIComponent(targetUrl)}`;
 }
 
