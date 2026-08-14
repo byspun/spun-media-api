@@ -155,15 +155,15 @@ proxy.get('/subtitles', async (c) => {
   if (!payload) return errorResponse('SECURE_LINK_ERROR', 'Invalid subtitle reference.', 403);
 
   const archiveBytes = await fetchArchive(payload.archive_url);
-  if (!archiveBytes) return errorResponse('SERVICE_OFFLINE', 'Subtitle track unavailable.', 502);
+  if (!archiveBytes) return errorResponse('SUBTITLE_UNAVAILABLE', 'Subtitle track unavailable.', 502);
 
   const subtitleBytes = extractSubtitleFile(archiveBytes, payload.language_code);
-  if (!subtitleBytes) return errorResponse('CONTENT_UNAVAILABLE', 'No playable subtitle track found.', 422);
+  if (!subtitleBytes) return errorResponse('SUBTITLE_TRACK_NOT_FOUND', 'No playable subtitle track found.', 422);
 
   const srt = decodeSubtitle(subtitleBytes);
   const vtt = srtToVtt(srt);
   if (!vtt.includes('-->')) {
-    return errorResponse('CONTENT_UNAVAILABLE', 'Subtitle track could not be prepared.', 422);
+    return errorResponse('SUBTITLE_CONVERSION_FAILED', 'Subtitle track could not be prepared.', 422);
   }
 
   return new Response(vtt, {

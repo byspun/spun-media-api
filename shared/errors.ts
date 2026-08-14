@@ -21,6 +21,10 @@ export type SpunErrorCode =
   | 'RATE_LIMIT'
   | 'MAINTENANCE'
   | 'METHOD_NOT_ALLOWED'
+  | 'SUBTITLE_UNAVAILABLE'
+  | 'SUBTITLE_ARCHIVE_INVALID'
+  | 'SUBTITLE_TRACK_NOT_FOUND'
+  | 'SUBTITLE_CONVERSION_FAILED'
   | 'INTERNAL_ERROR';
 
 export interface SpunErrorDetail {
@@ -100,6 +104,26 @@ export const ERROR_REGISTRY: Record<SpunErrorCode, Omit<SpunErrorDetail, 'code'>
     error:       'Method not allowed',
     description: 'You tried to use an invalid HTTP method for this endpoint.',
     action:      'Check the API documentation for the supported HTTP methods.'
+  },
+  SUBTITLE_UNAVAILABLE: {
+    error:       'Subtitle track unavailable',
+    description: 'We could not retrieve the subtitle archive from the source.',
+    action:      'This is usually a temporary connection issue. Please try again in a moment.'
+  },
+  SUBTITLE_ARCHIVE_INVALID: {
+    error:       'Invalid subtitle archive',
+    description: 'The retrieved subtitle archive is corrupt or uses an unsupported format.',
+    action:      'Our automated systems have been notified. Please try a different subtitle track.'
+  },
+  SUBTITLE_TRACK_NOT_FOUND: {
+    error:       'Subtitle track not found',
+    description: 'The archive was retrieved, but it does not contain a usable subtitle file for the requested language.',
+    action:      'Try selecting a different subtitle track or language.'
+  },
+  SUBTITLE_CONVERSION_FAILED: {
+    error:       'Subtitle preparation failed',
+    description: 'We found the subtitle track but could not convert it to a format playable in your browser.',
+    action:      'This is a technical issue with the source file. Please try a different track.'
   },
   INTERNAL_ERROR: {
     error:       'Unexpected error',

@@ -50,9 +50,14 @@ export async function bumpCacheVersion(env: Env): Promise<string> {
   const versionNum = parseInt(current.replace('v', '')) || 6;
   const next = `v${versionNum + 1}`;
   
-  await env.MEDIA_CACHE.put(VERSION_KEY, next);
-  cachedVersion = next; // Update local cache
-  return next;
+  try {
+    await env.MEDIA_CACHE.put(VERSION_KEY, next);
+    cachedVersion = next; // Update local cache
+  } catch (err) {
+    console.error('[KV Error] Failed to bump cache version:', err);
+  }
+  
+  return cachedVersion || current;
 }
 
 // ─── Key builders ─────────────────────────────────────────────────────────────
@@ -117,15 +122,24 @@ export async function kvSet(
   value: unknown,
   ttlSeconds: number
 ): Promise<void> {
-  const version = await getCacheVersion(env);
-  const fullKey = `${version}:${key}`;
-  await env.MEDIA_CACHE.put(fullKey, JSON.stringify(value), {
-    expirationTtl: ttlSeconds,
-  });
+  try {
+    const version = await getCacheVersion(env);
+    const fullKey = `${version}:${key}`;
+    await env.MEDIA_CACHE.put(fullKey, JSON.stringify(value), {
+      expirationTtl: ttlSeconds,
+    });
+  } catch (err) {
+    // Silent fail on quota/write errors to keep the API functional
+    console.error('[KV Error] kvSet failed:', err);
+  }
 }
 
 export async function kvDel(env: Env, key: string): Promise<void> {
-  const version = await getCacheVersion(env);
-  const fullKey = `${version}:${key}`;
-  await env.MEDIA_CACHE.delete(fullKey);
+  try {
+    const version = await getCacheVersion(env);
+    const fullKey = `${version}:${key}`;
+    await env.MEDIA_CACHE.delete(fullKey);
+  } catch (err) {
+    console.error('[KV Error] kvDel failed:', err);
+  }
 }

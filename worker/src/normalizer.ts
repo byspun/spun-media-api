@@ -403,6 +403,11 @@ export function errorResponse(
   if (code === 'MISSING_URL')        mappedCode = 'BAD_REQUEST';
   if (code === 'FORBIDDEN_HOST')     mappedCode = 'FORBIDDEN';
   if (code === 'MISSING_EXTERNAL_ID') mappedCode = 'INTERNAL_ERROR';
+  if (code === 'SUBDL_ERROR')         mappedCode = 'SERVICE_OFFLINE';
+  if (code === 'SUBTITLE_UNAVAILABLE') mappedCode = 'SUBTITLE_UNAVAILABLE';
+  if (code === 'SUBTITLE_ARCHIVE_INVALID') mappedCode = 'SUBTITLE_ARCHIVE_INVALID';
+  if (code === 'SUBTITLE_TRACK_NOT_FOUND') mappedCode = 'SUBTITLE_TRACK_NOT_FOUND';
+  if (code === 'SUBTITLE_CONVERSION_FAILED') mappedCode = 'SUBTITLE_CONVERSION_FAILED';
 
   const detail = getError(mappedCode);
 
