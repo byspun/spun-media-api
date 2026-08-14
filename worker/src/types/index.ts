@@ -74,6 +74,16 @@ export interface TrailerInfo {
   site: string;
 }
 
+export type RelationshipGroupKind = 'collection' | 'franchise';
+
+export interface MembershipSummary {
+  kind:     RelationshipGroupKind;
+  id:       string;
+  title:    string;
+  position: number;
+  total:    number;
+}
+
 export interface InfoResponse {
   spun_id:  string;
   type:     ContentType;
@@ -97,6 +107,7 @@ export interface InfoResponse {
     total:   number;
     seasons: SeasonSummary[];
   } | null;
+  part_of: MembershipSummary[];
 }
 
 // ─── Episodes response ────────────────────────────────────────────────────────
@@ -114,9 +125,25 @@ export interface RelatedEntry {
   item:     ContentItem;
 }
 
+export interface RelatedGroupItem extends ContentItem {
+  position:   number;
+  role:       'main' | 'sequel' | 'prequel' | 'spinoff' | 'side_story' | null;
+  note:       string | null;
+  is_current: boolean;
+}
+
+export interface RelatedGroup {
+  kind:  RelationshipGroupKind;
+  id:    string;
+  title: string;
+  total: number;
+  items: RelatedGroupItem[];
+}
+
 export interface RelatedResponse {
   spun_id: string;
   related: RelatedEntry[];
+  groups:  RelatedGroup[];
 }
 
 // ─── Stream response ──────────────────────────────────────────────────────────

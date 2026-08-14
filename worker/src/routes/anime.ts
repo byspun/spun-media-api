@@ -38,12 +38,11 @@ import {
   getAnilistByDemographic,
   getAnilistBySource,
   getAnilistByGenre,
+  getAnilistByTag,
   getAnilistStudios,
   getAnilistStudioWorks,
   getAnilistMedia,
   anilistTitle,
-  normalizeAnilistItem,
-  formatCountdown,
 } from '../metadata/anilist.js';
 import { getJikanThemes, getJikanFillers } from '../metadata/jikan.js';
 import { resolveFromAnilist, getBySpunId } from '../identity/resolver.js';
@@ -51,7 +50,6 @@ import {
   normalizeRankedItem,
   normalizeAiringEntry,
   anilistToItem,
-  normalizeAnimeInfo,
   jsonResponse,
   errorResponse,
 } from '../normalizer.js';

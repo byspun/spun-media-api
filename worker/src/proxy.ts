@@ -7,10 +7,7 @@
 //   - M3U8 files: rewrite all relative + absolute URLs through proxy
 //   - Everything else: stream through with correct headers (Range support)
 
-import type { Env } from './types/env.js';
-
-const PROXY_PATH   = '/proxy';
-const ALLOWED_EXTS = ['.m3u8', '.ts', '.key', '.aac', '.mp4', '.vtt', '.webvtt'];
+const PROXY_PATH = '/proxy';
 
 // ─── Determine if a URL is an M3U8 manifest ──────────────────────────────────
 
@@ -85,7 +82,7 @@ function rewriteM3u8(body: string, baseUrl: string, requestUrl: URL): string {
 
 // ─── Main proxy handler ───────────────────────────────────────────────────────
 
-export async function proxyHls(request: Request, env: Env): Promise<Response> {
+export async function proxyHls(request: Request, _env: unknown): Promise<Response> {
   const reqUrl    = new URL(request.url);
   const targetRaw = reqUrl.searchParams.get('url');
 

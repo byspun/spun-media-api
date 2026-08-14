@@ -124,6 +124,7 @@ export function normalizeMovieInfo(
     stills,
     cast,
     episodes: null,
+    part_of: [],
   };
 }
 
@@ -189,6 +190,7 @@ export function normalizeTvInfo(
       total:   totalEpisodes,
       seasons: seasonSummaries,
     },
+    part_of: [],
   };
 }
 
@@ -255,6 +257,7 @@ export function normalizeAnimeInfo(
     episodes: episodeCount !== null
       ? { total: episodeCount, seasons: [{ season: 1, count: episodeCount }] }
       : null,
+    part_of: [],
   };
 }
 
@@ -337,7 +340,7 @@ export function normalizeRankedItem(
 // ─── Slim ContentItem from TMDB search result ─────────────────────────────────
 
 export function tmdbResultToItem(
-  raw:    { title?: string; name?: string; release_date?: string; first_air_date?: string; vote_average?: number; poster_path?: string | null },
+  raw:    { title?: string; name?: string; release_date?: string | null; first_air_date?: string | null; vote_average?: number; poster_path?: string | null },
   spunId: string,
   type:   ContentType
 ): ContentItem {
@@ -382,7 +385,7 @@ export function anilistToItem(
  */
 export function errorResponse(
   code:    string,
-  message: string, // Kept for backward compatibility but ignored if code matches registry
+  _message: string, // Kept for backward compatibility but ignored if code matches registry
   status:  number
 ): Response {
   // Map old internal codes to new outcome-based codes

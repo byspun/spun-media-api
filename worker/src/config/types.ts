@@ -1,6 +1,8 @@
 // worker/src/config/types.ts
 // Shared types for all franchise and hero config files.
 
+import type { ContentType } from '../types/index.js';
+
 export type FranchiseRelation =
   | 'main'
   | 'sequel'
@@ -13,4 +15,10 @@ export interface FranchiseEntry {
   spun_id:  string;
   relation: FranchiseRelation | null;
   note:     string | null;
+}
+
+export interface FranchiseDefinition {
+  name:    string;
+  type:    ContentType;
+  entries: FranchiseEntry[];
 }

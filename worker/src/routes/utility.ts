@@ -10,7 +10,6 @@ import {
   getByTmdbId,
   getByAnilistId,
   getByImdbId,
-  getBySpunId,
 } from '../identity/resolver.js';
 import { getDb } from '../db.js';
 import { kvGet, kvSet, CacheKeys, TTL } from '../cache.js';

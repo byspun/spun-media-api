@@ -11,7 +11,7 @@
 // the same spun_id back. No bulk import needed.
 
 import { getDb } from '../db.js';
-import { kvGet, kvSet, kvDel, CacheKeys, TTL } from '../cache.js';
+import { kvGet, kvSet, kvDel, TTL } from '../cache.js';
 import { makeSpunId, makeSlug } from './slugger.js';
 import type { Env } from '../types/env.js';
 import type { ContentType, MediaTitleRow } from '../types/index.js';
@@ -22,8 +22,7 @@ export async function getBySpunId(
   env: Env,
   spunId: string
 ): Promise<MediaTitleRow | null> {
-  const cacheKey = CacheKeys.info(spunId);
-  const cached   = await kvGet<MediaTitleRow>(env, `row:${spunId}`);
+  const cached = await kvGet<MediaTitleRow>(env, `row:${spunId}`);
   if (cached) return cached;
 
   const sql  = getDb(env);
@@ -236,6 +235,29 @@ export async function linkTmdbId(
     WHERE spun_id = ${spunId} AND tmdb_id IS NULL
   `;
   await kvDel(env, `row:${spunId}`);
+}
+
+// ─── Batch lookup — curated franchise entries ─────────────────────────────────
+
+export async function getBySlugs(
+  env:   Env,
+  slugs: string[],
+  type:  ContentType
+): Promise<MediaTitleRow[]> {
+  const uniqueSlugs = [...new Set(slugs.filter(Boolean))];
+  if (!uniqueSlugs.length) return [];
+
+  const sql = getDb(env);
+  const rows = await sql`
+    SELECT * FROM media_titles
+    WHERE slug = ANY(${uniqueSlugs}) AND content_type = ${type}
+  ` as MediaTitleRow[];
+
+  await Promise.all(
+    rows.map((row) => kvSet(env, `row:${row.spun_id}`, row, TTL.idMap))
+  );
+
+  return rows;
 }
 
 // ─── Batch Resolve — TMDB ─────────────────────────────────────────────────────

@@ -5,7 +5,7 @@
 // Only the public-facing fields (id, name, description, content_types) are
 // ever returned in API responses. The mapping fields are internal only.
 
-import type { SpunGenre, GenreGroup } from '../types/index.js';
+import type { SpunGenre } from '../types/index.js';
 
 export const GENRES: SpunGenre[] = [
   // ─── Action & Adventure ───────────────────────────────────────────────────

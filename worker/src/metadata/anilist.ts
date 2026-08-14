@@ -12,7 +12,6 @@
 import type { AniListMedia, ContentItem } from '../types/index.js';
 import type { Env } from '../types/env.js';
 
-const ALLOWED_FORMATS = ['TV', 'TV_SHORT', 'MOVIE', 'OVA', 'ONA', 'SPECIAL'];
 
 // ─── GraphQL executor ─────────────────────────────────────────────────────────
 

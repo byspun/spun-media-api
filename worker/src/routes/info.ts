@@ -3,40 +3,35 @@
 //   GET /info/:spunId              — full metadata
 //   GET /info/:spunId/episodes     — episode list (TV + anime)
 //   GET /info/:spunId/cast         — cast list
-//   GET /info/:spunId/related      — related titles / recommendations
+//   GET /info/:spunId/related      — structural title relations and groups
 
 import { Hono } from 'hono';
 import type { Env } from '../types/env.js';
-import type { ContentItem, RelatedEntry } from '../types/index.js';
+import type { RelatedEntry, RelatedResponse } from '../types/index.js';
 import { kvGet, kvSet, CacheKeys, TTL } from '../cache.js';
 import { getBySpunId } from '../identity/resolver.js';
 import {
   getTmdbMovieDetail,
   getTmdbTvDetail,
   getTmdbSeasonDetail,
-  getTmdbSimilar,
-  getTmdbRecommendations,
   tmdbProfile,
-  tmdbPoster,
-  extractYear,
 } from '../metadata/tmdb.js';
-import { getAnilistMedia, anilistTitle } from '../metadata/anilist.js';
+import { getAnilistMedia } from '../metadata/anilist.js';
 import { getJikanEpisodes } from '../metadata/jikan.js';
 import {
   normalizeMovieInfo,
   normalizeTvInfo,
   normalizeAnimeInfo,
   normalizeTvEpisodes,
-  tmdbResultToItem,
   anilistToItem,
   jsonResponse,
   errorResponse,
 } from '../normalizer.js';
 import {
-  resolveFromTmdb,
   resolveFromAnilist,
   linkMalId,
 } from '../identity/resolver.js';
+import { getMembershipSummaries, getRelationshipGroups } from '../relationships.js';
 
 const info = new Hono<{ Bindings: Env }>();
 
@@ -52,17 +47,29 @@ info.get('/:spunId', async (c) => {
   if (!row) return errorResponse('NOT_FOUND', 'Title not found.', 404);
 
   let payload: unknown;
-  const isAiring = row.content_type === 'anime'; // TTL decision
-
   if (row.content_type === 'movie' && row.tmdb_id) {
     const movie = await getTmdbMovieDetail(c.env, row.tmdb_id);
     if (!movie) return errorResponse('UPSTREAM_ERROR', 'Could not fetch metadata.', 502);
-    payload = normalizeMovieInfo(spunId, movie);
+
+    const movieInfo = normalizeMovieInfo(spunId, movie);
+    try {
+      movieInfo.part_of = await getMembershipSummaries(c.env, row, movie.belongs_to_collection);
+    } catch (err) {
+      console.error('[Info] Movie relationship context failed:', err);
+    }
+    payload = movieInfo;
 
   } else if (row.content_type === 'tv' && row.tmdb_id) {
     const tv = await getTmdbTvDetail(c.env, row.tmdb_id);
     if (!tv) return errorResponse('UPSTREAM_ERROR', 'Could not fetch metadata.', 502);
-    payload = normalizeTvInfo(spunId, tv);
+
+    const tvInfo = normalizeTvInfo(spunId, tv);
+    try {
+      tvInfo.part_of = await getMembershipSummaries(c.env, row);
+    } catch (err) {
+      console.error('[Info] TV relationship context failed:', err);
+    }
+    payload = tvInfo;
 
   } else if (row.content_type === 'anime' && row.anilist_id) {
     const media = await getAnilistMedia(c.env, row.anilist_id);
@@ -73,7 +80,13 @@ info.get('/:spunId', async (c) => {
       linkMalId(c.env, spunId, media.idMal).catch(() => {});
     }
 
-    payload  = normalizeAnimeInfo(spunId, media);
+    const animeInfo = normalizeAnimeInfo(spunId, media);
+    try {
+      animeInfo.part_of = await getMembershipSummaries(c.env, row);
+    } catch (err) {
+      console.error('[Info] Anime relationship context failed:', err);
+    }
+    payload = animeInfo;
     // Use shorter TTL for airing anime
     const ttl = media.status === 'RELEASING' ? TTL.metadataAiring : TTL.metadata;
     await kvSet(c.env, cacheKey, payload, ttl);
@@ -215,10 +228,6 @@ info.get('/:spunId/cast', async (c) => {
   let cast: Array<{ image: string | null; character: string | null; name: string }> = [];
 
   if ((row.content_type === 'movie' || row.content_type === 'tv') && row.tmdb_id) {
-    const endpoint = row.content_type === 'movie'
-      ? `/movie/${row.tmdb_id}/credits`
-      : `/tv/${row.tmdb_id}/credits`;
-
     // Fetch full credits directly
     const data = await (row.content_type === 'movie'
       ? getTmdbMovieDetail(c.env, row.tmdb_id)
@@ -270,72 +279,46 @@ info.get('/:spunId/related', async (c) => {
 
   const related: RelatedEntry[] = [];
 
-  if ((row.content_type === 'movie' || row.content_type === 'tv') && row.tmdb_id) {
-    const mediaType = row.content_type;
-    const [similar, recs] = await Promise.all([
-      getTmdbSimilar(c.env, row.tmdb_id, mediaType),
-      getTmdbRecommendations(c.env, row.tmdb_id, mediaType),
-    ]);
-
-    // Deduplicate: prefer recommendations, fill with similar
-    const seen = new Set<number>();
-    const all  = [...recs, ...similar].filter((r) => {
-      if (seen.has(r.id)) return false;
-      seen.add(r.id);
-      return true;
-    }).slice(0, 20);
-
-    const items = await Promise.all(
-      all.map(async (r) => {
-        const title = r.title || r.name || '';
-        const type  = (r.media_type === 'movie' || r.media_type === 'tv')
-          ? r.media_type
-          : mediaType;
-        const relRow = await resolveFromTmdb(c.env, r.id, type as 'movie' | 'tv', title);
-        return {
-          relation: recs.find((rec) => rec.id === r.id) ? 'Recommendation' : 'Similar',
-          item:     tmdbResultToItem(r, relRow.spun_id, type),
-        };
-      })
-    );
-
-    related.push(...items);
-  }
-
+  // Movies and TV titles do not receive generic recommendations here. Their
+  // factual membership is represented by the `groups` array below.
   if (row.content_type === 'anime' && row.anilist_id) {
     const media = await getAnilistMedia(c.env, row.anilist_id);
     if (media) {
-      // Relations (sequels, prequels, etc.)
       const relationEdges = (media.relations?.edges ?? [])
-        .filter((e) => e.node && (e.node as any).type === 'ANIME')
+        .filter((edge) => edge.node && (edge.node as any).type === 'ANIME')
         .slice(0, 10);
 
-      for (const edge of relationEdges) {
-        const node  = edge.node as any;
-        const title = node.title?.english || node.title?.romaji || '';
-        const relRow = await resolveFromAnilist(c.env, node.id, title);
-        related.push({
-          relation: edge.relationType,
-          item:     anilistToItem(node, relRow.spun_id),
-        });
-      }
+      const entries = await Promise.all(
+        relationEdges.map(async (edge) => {
+          try {
+            const node = edge.node as any;
+            const title = node.title?.english || node.title?.romaji || '';
+            const relationRow = await resolveFromAnilist(c.env, node.id, title);
+            return {
+              relation: edge.relationType,
+              item: anilistToItem(node, relationRow.spun_id),
+            } satisfies RelatedEntry;
+          } catch (err) {
+            console.error('[Related] Anime relation resolution failed:', err);
+            return null;
+          }
+        })
+      );
 
-      // Recommendations
-      const recNodes = (media.recommendations?.nodes ?? []).slice(0, 10);
-      for (const node of recNodes) {
-        if (!node.mediaRecommendation) continue;
-        const rec   = node.mediaRecommendation;
-        const title = anilistTitle(rec);
-        const relRow = await resolveFromAnilist(c.env, rec.id, title);
-        related.push({
-          relation: 'Recommendation',
-          item:     anilistToItem(rec, relRow.spun_id),
-        });
-      }
+      related.push(...entries.filter((entry): entry is RelatedEntry => entry !== null));
     }
   }
 
-  const payload = { spun_id: spunId, related };
+  let groups: RelatedResponse['groups'] = [];
+  try {
+    groups = await getRelationshipGroups(c.env, row);
+  } catch (err) {
+    // Relationship context is optional enrichment. A valid title with no
+    // available group data remains a successful empty result.
+    console.error('[Related] Group assembly failed:', err);
+  }
+
+  const payload: RelatedResponse = { spun_id: spunId, related, groups };
   await kvSet(c.env, cacheKey, payload, TTL.metadata);
   return jsonResponse(payload);
 });

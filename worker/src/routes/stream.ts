@@ -9,7 +9,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../types/env.js';
 import { getBySpunId } from '../identity/resolver.js';
-import { jsonResponse, errorResponse } from '../normalizer.js';
+import { errorResponse } from '../normalizer.js';
 
 const stream = new Hono<{ Bindings: Env }>();
 

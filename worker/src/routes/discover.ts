@@ -15,8 +15,6 @@ import { kvGet, kvSet, CacheKeys, TTL } from '../cache.js';
 import {
   tmdbDiscover,
   getTmdbTrending,
-  tmdbPoster,
-  extractYear,
 } from '../metadata/tmdb.js';
 import {
   getAnilistTrending,
@@ -30,7 +28,6 @@ import { resolveFromTmdb, resolveFromAnilist } from '../identity/resolver.js';
 import {
   tmdbResultToItem,
   anilistToItem,
-  mapTmdbGenres,
   jsonResponse,
   errorResponse,
 } from '../normalizer.js';
@@ -307,7 +304,7 @@ discover.get('/studio/:studioId', async (c) => {
   if (studio.query_type === 'anilist_studio') {
 
     const anilistStudioId = parseInt(studio.query_value);
-    const { media, works_count, hasNextPage } = await getAnilistStudioWorks(
+    const { media, hasNextPage } = await getAnilistStudioWorks(
       c.env, anilistStudioId, page
     );
 

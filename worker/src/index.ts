@@ -206,7 +206,7 @@ app.notFound((c) => {
 
 // ─── Error handler ────────────────────────────────────────────────────────────
 
-app.onError((err, c) => {
+app.onError((err, _c) => {
   console.error('[Worker Error]', err.message, err.stack);
   return errorResponse('INTERNAL_ERROR', 'Unexpected error', 500);
 });

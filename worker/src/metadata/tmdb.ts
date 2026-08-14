@@ -114,6 +114,28 @@ export async function getTmdbMovieDetail(
   });
 }
 
+export interface TmdbCollectionPart {
+  id:             number;
+  title:          string;
+  original_title: string;
+  release_date:   string | null;
+  vote_average:   number;
+  poster_path:    string | null;
+}
+
+export interface TmdbCollection {
+  id:    number;
+  name:  string;
+  parts: TmdbCollectionPart[];
+}
+
+export async function getTmdbCollection(
+  env:          Env,
+  collectionId: number
+): Promise<TmdbCollection | null> {
+  return tmdbFetch<TmdbCollection>(env, `/collection/${collectionId}`);
+}
+
 // ─── TV detail ────────────────────────────────────────────────────────────────
 
 export interface TmdbTvDetail {

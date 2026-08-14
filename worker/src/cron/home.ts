@@ -4,7 +4,7 @@
 // resolving spun_ids in batch, and caching the final results in KV.
 
 import type { Env } from '../types/env.js';
-import type { ContentItem } from '../types/index.js';
+import type { AniListMedia, ContentItem } from '../types/index.js';
 import { kvSet, CacheKeys, TTL } from '../cache.js';
 import { getTmdbTrending, tmdbDiscover } from '../metadata/tmdb.js';
 import {
@@ -70,7 +70,7 @@ async function tmdbToItems(
 
 async function anilistToItems(
   env:   Env,
-  media: Array<Record<string, any>>,
+  media: AniListMedia[],
   limit = ROW_MAX
 ): Promise<ContentItem[]> {
   const slice = media.slice(0, limit);
@@ -101,7 +101,7 @@ async function franchiseRow(
   const sorted = [...entries].sort((a, b) => a.order - b.order);
   const filled = sorted.filter((e) => !e.spun_id.includes('xxxxxx'));
 
-  const items = await Promise.all(
+  const items: Array<ContentItem | null> = await Promise.all(
     filled.map(async (e) => {
       const row = await getBySpunId(env, e.spun_id);
       if (!row) return null;
@@ -110,9 +110,9 @@ async function franchiseRow(
         spun_id: e.spun_id,
         type:    row.content_type as 'movie' | 'tv' | 'anime',
         title:   row.title       ?? '',
-        year:    row.year        ?? null,
-        rating:  row.rating      ?? null,
-        poster:  row.poster_path ?? null,
+        year:    null,
+        rating:  null,
+        poster:  null,
       } satisfies ContentItem;
     })
   );
@@ -145,9 +145,9 @@ async function buildHero(
             spun_id: o.spun_id,
             type:    row.content_type as 'movie' | 'tv' | 'anime',
             title:   row.title       ?? '',
-            year:    row.year        ?? null,
-            rating:  row.rating      ?? null,
-            poster:  row.poster_path ?? null,
+            year:    null,
+            rating:  null,
+            poster:  null,
           });
           seen.add(o.spun_id);
         }
@@ -369,18 +369,14 @@ export async function buildTvHome(env: Env) {
 }
 
 export async function buildAnimeHome(env: Env) {
-  const { season } = getCurrentSeason();
-  const year       = new Date().getFullYear();
-
   const [
-    trending, airing, nextSeason, seasonal, seasonTop, allTime, popular,
+    trending, airing, nextSeason, seasonTop, allTime, popular,
     otaku, startHere, action, comedy, romance, dark, isekai, shonen,
     hidden, films, mappa, ufotable, ghibli, classic, rewatch,
   ] = await Promise.all([
     getAnilistTrending(env, 1, 20),
     getAnilistAiring(env, 1, 20),
     getAnilistNextSeason(env, 1, 20),
-    getAnilistSeasonal(env, season, year, 1, 20),
     getAnilistSeasonTopScored(env, 1, 20),
     getAnilistRankingsAlltime(env, 1, 20),
     getAnilistRankingsPopular(env, 1, 20),
@@ -402,15 +398,14 @@ export async function buildAnimeHome(env: Env) {
   ]);
 
   const [
-    trendingItems, airingItems, nextSeasonItems, seasonalItems, seasonTopItems, allTimeItems, popularItems,
+    trendingItems, airingItems, nextSeasonItems, seasonTopItems, allTimeItems, popularItems,
     otakuItems, startHereItems, actionItems, comedyItems, romanceItems, darkItems, isekaiItems, shonenItems,
     hiddenItems, filmsItems, mappaItems, ufotableItems, ghibliItems, classicItems, rewatchItems,
   ] = await Promise.all([
     anilistToItems(env, trending),
     anilistToItems(env, airing),
     anilistToItems(env, nextSeason),
-    anilistToItems(env, seasonal),
-    anilistToItems(env, seasonTop.media),
+    anilistToItems(env, seasonTop),
     anilistToItems(env, allTime),
     anilistToItems(env, popular),
     anilistToItems(env, otaku),

@@ -11,6 +11,7 @@ FAIL=0
 call() {
   local label="$1"
   local url="$2"
+  local assertion="${3:-}"
   local response status body ok ms t1 t2 parsed
 
   t1=$(date +%s)
@@ -20,13 +21,18 @@ call() {
   body=$(echo "$response" | head -n -1)
   status=$(echo "$response" | tail -n 1)
   ms=$(( t2 - t1 ))
+  ok="false"
 
   if [[ "$status" == "200" || "$status" == "307" ]]; then
-    ok="true"
-    PASS=$((PASS + 1))
-    echo "  ✓  [$status] $label"
+    if [[ -z "$assertion" ]] || echo "$body" | jq -e "$assertion" >/dev/null 2>&1; then
+      ok="true"
+      PASS=$((PASS + 1))
+      echo "  ✓  [$status] $label"
+    else
+      FAIL=$((FAIL + 1))
+      echo "  ✗  [$status] $label — response contract failed"
+    fi
   else
-    ok="false"
     FAIL=$((FAIL + 1))
     echo "  ✗  [$status] $label"
   fi
@@ -84,21 +90,21 @@ echo ""
 
 echo "▶  Info"
 if [[ -n "$MOVIE_ID" ]]; then
-  call "Info — movie"          "$BASE/info/$MOVIE_ID"
+  call "Info — movie"          "$BASE/info/$MOVIE_ID" 'has("part_of") and (.part_of | type == "array")'
   call "Info — movie cast"     "$BASE/info/$MOVIE_ID/cast"
-  call "Info — movie related"  "$BASE/info/$MOVIE_ID/related"
+  call "Info — movie related"  "$BASE/info/$MOVIE_ID/related" 'has("related") and (.related | type == "array") and has("groups") and (.groups | type == "array")'
 fi
 if [[ -n "$TV_ID" ]]; then
-  call "Info — TV"             "$BASE/info/$TV_ID"
+  call "Info — TV"             "$BASE/info/$TV_ID" 'has("part_of") and (.part_of | type == "array")'
   call "Info — TV episodes"    "$BASE/info/$TV_ID/episodes"
   call "Info — TV episodes s1" "$BASE/info/$TV_ID/episodes?season=1"
   call "Info — TV cast"        "$BASE/info/$TV_ID/cast"
-  call "Info — TV related"     "$BASE/info/$TV_ID/related"
+  call "Info — TV related"     "$BASE/info/$TV_ID/related" 'has("related") and (.related | type == "array") and has("groups") and (.groups | type == "array")'
 fi
 if [[ -n "$ANIME_ID" ]]; then
-  call "Info — anime"          "$BASE/info/$ANIME_ID"
+  call "Info — anime"          "$BASE/info/$ANIME_ID" 'has("part_of") and (.part_of | type == "array")'
   call "Info — anime cast"     "$BASE/info/$ANIME_ID/cast"
-  call "Info — anime related"  "$BASE/info/$ANIME_ID/related"
+  call "Info — anime related"  "$BASE/info/$ANIME_ID/related" 'has("related") and (.related | type == "array") and has("groups") and (.groups | type == "array") and all(.related[]; .relation != "Recommendation" and .relation != "Similar")'
   call "Info — anime episodes" "$BASE/info/$ANIME_ID/episodes"
 fi
 
@@ -208,13 +214,13 @@ fi
 echo ""
 echo "▶  Similar"
 if [[ -n "$MOVIE_ID" ]]; then
-  call "Similar — movie"              "$BASE/similar/movie/$MOVIE_ID"
+  call "Similar — movie"              "$BASE/similar/movie/$MOVIE_ID" 'has("results") and (.results | type == "array") and (has("source") | not)'
 fi
 if [[ -n "$TV_ID" ]]; then
-  call "Similar — TV"                 "$BASE/similar/tv/$TV_ID"
+  call "Similar — TV"                 "$BASE/similar/tv/$TV_ID" 'has("results") and (.results | type == "array") and (has("source") | not)'
 fi
 if [[ -n "$ANIME_ID" ]]; then
-  call "Similar — anime"              "$BASE/similar/anime/$ANIME_ID"
+  call "Similar — anime"              "$BASE/similar/anime/$ANIME_ID" 'has("results") and (.results | type == "array") and (has("source") | not)'
 fi
 
 echo ""
