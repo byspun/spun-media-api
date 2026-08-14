@@ -316,6 +316,9 @@ export interface MediaTitleRow {
   slug:            string;
   content_type:    ContentType;
   title:           string;
+  year:            number | null;
+  rating:          number | null;
+  poster_path:     string | null;
   tmdb_id:         number | null;
   anilist_id:      number | null;
   mal_id:          number | null;
