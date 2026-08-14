@@ -61,26 +61,47 @@ function identitySlug(spunId: string): string {
  * suffix while they await full ID backfill, so membership matches on the stable
  * title slug while group items resolve only from verified catalog rows.
  */
-export function findFranchiseBySpunId(spunId: string): {
+export interface FranchiseMembership {
   key:      string;
   name:     string;
   type:     FranchiseDefinition['type'];
   entries:  FranchiseEntry[];
   entry:    FranchiseEntry;
-} | null {
+}
+
+function makeMembership(
+  key: string,
+  franchise: FranchiseDefinition,
+  entry: FranchiseEntry
+): FranchiseMembership {
+  return {
+    key,
+    name: franchise.name,
+    type: franchise.type,
+    entries: franchise.entries,
+    entry,
+  };
+}
+
+export function findFranchiseBySpunId(spunId: string): FranchiseMembership | null {
   const slug = identitySlug(spunId);
 
   for (const [key, franchise] of Object.entries(FRANCHISE_REGISTRY)) {
     const entry = franchise.entries.find((candidate) => identitySlug(candidate.spun_id) === slug);
-    if (entry) {
-      return {
-        key,
-        name: franchise.name,
-        type: franchise.type,
-        entries: franchise.entries,
-        entry,
-      };
-    }
+    if (entry) return makeMembership(key, franchise, entry);
+  }
+
+  return null;
+}
+
+export function findFranchiseByPrimaryId(
+  type: FranchiseDefinition['type'],
+  primaryId: number
+): FranchiseMembership | null {
+  for (const [key, franchise] of Object.entries(FRANCHISE_REGISTRY)) {
+    if (franchise.type !== type) continue;
+    const entry = franchise.entries.find((candidate) => candidate.primary_id === primaryId);
+    if (entry) return makeMembership(key, franchise, entry);
   }
 
   return null;

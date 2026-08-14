@@ -11,10 +11,12 @@ export type FranchiseRelation =
   | 'side_story';
 
 export interface FranchiseEntry {
-  order:    number;
-  spun_id:  string;
-  relation: FranchiseRelation | null;
-  note:     string | null;
+  order:      number;
+  spun_id:    string;
+  title:      string;
+  primary_id: number;
+  relation:   FranchiseRelation | null;
+  note:       string | null;
 }
 
 export interface FranchiseDefinition {

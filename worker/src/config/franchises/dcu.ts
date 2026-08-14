@@ -5,5 +5,5 @@
 import type { FranchiseEntry } from '../types.js';
 
 export const dcu: FranchiseEntry[] = [
-  { order: 1, spun_id: 'superman-2025-xxxxxx', relation: 'main', note: 'Start here — James Gunn era begins' },
+  { order: 1, spun_id: "superman-379870", title: "Superman", primary_id: 1061474, relation: 'main', note: 'Start here — James Gunn era begins' },
 ];
