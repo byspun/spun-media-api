@@ -23,3 +23,11 @@ preview_id = "REPLACE_WITH_KV_PREVIEW_ID"
 # X_SPUN_SECRET              (shared secret for Worker ↔ Render auth)
 # SUBDL_API_KEY              (SubDL subtitle API key)
 # TASTEDIVE_API_KEY          (TasteDive similar content API key)
+
+[triggers]
+crons = [
+  "0 * * * *",    # full home build — every hour on the hour
+  "15 * * * *",   # movie home — :15 past every hour
+  "30 * * * *",   # tv home — :30 past every hour
+  "45 * * * *",   # anime home — :45 past every hour
+]

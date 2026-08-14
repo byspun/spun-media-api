@@ -101,7 +101,7 @@ anime.get('/seasons/:year/:season', async (c) => {
 
   const media   = await getAnilistSeasonal(c.env, season, year, page);
   const results = await toItems(c.env, media);
-  const payload = { year, season: season.toLowerCase(), page, has_more: media.length >= 30, results };
+  const payload = { year, season: season.toLowerCase(), page, has_more: media.length >= 20, results };
   await kvSet(c.env, cacheKey, payload, TTL.animeSchedule);
   return jsonResponse(payload);
 });
@@ -248,7 +248,7 @@ anime.get('/airing', async (c) => {
 
   const media   = await getAnilistAiring(c.env, page);
   const results = await toItems(c.env, media);
-  const payload = { page, has_more: media.length >= 30, results };
+  const payload = { page, has_more: media.length >= 20, results };
   await kvSet(c.env, cacheKey, payload, TTL.animeSchedule);
   return jsonResponse(payload);
 });
@@ -343,7 +343,7 @@ anime.get('/genre/:genre', async (c) => {
     : await getAnilistByGenre(c.env, anilistGenre!, page);
 
   const results = await toItems(c.env, media);
-  const payload = { genre: genreId, page, has_more: media.length >= 30, results };
+  const payload = { genre: genreId, page, has_more: media.length >= 20, results };
   await kvSet(c.env, cacheKey, payload, TTL.discover);
   return jsonResponse(payload);
 });

@@ -404,7 +404,14 @@ export function errorResponse(
   const detail = getError(mappedCode);
 
   return new Response(
-    JSON.stringify({ error: detail }),
+    JSON.stringify({
+      error: {
+        code:        detail.code,
+        error:       detail.error,
+        description: detail.description,
+        action:      detail.action,
+      },
+    }),
     {
       status,
       headers: { 'Content-Type': 'application/json' },

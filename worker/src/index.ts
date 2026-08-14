@@ -6,6 +6,12 @@ import { Hono }   from 'hono';
 import { cors }   from 'hono/cors';
 import type { Env } from './types/env.js';
 import { errorResponse } from './normalizer.js';
+import {
+  buildAndCacheGeneralHome,
+  buildAndCacheMovieHome,
+  buildAndCacheTvHome,
+  buildAndCacheAnimeHome,
+} from './cron/home.js';
 
 import searchRoute    from './routes/search.js';
 import infoRoute      from './routes/info.js';
@@ -126,4 +132,23 @@ app.onError((err, c) => {
   return errorResponse('INTERNAL_ERROR', 'Unexpected error', 500);
 });
 
-export default app;
+export default {
+  fetch: app.fetch,
+
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
+    switch (event.cron) {
+      case '0 * * * *':
+        ctx.waitUntil(buildAndCacheGeneralHome(env));
+        break;
+      case '15 * * * *':
+        ctx.waitUntil(buildAndCacheMovieHome(env));
+        break;
+      case '30 * * * *':
+        ctx.waitUntil(buildAndCacheTvHome(env));
+        break;
+      case '45 * * * *':
+        ctx.waitUntil(buildAndCacheAnimeHome(env));
+        break;
+    }
+  },
+};

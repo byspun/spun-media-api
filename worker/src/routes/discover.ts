@@ -22,6 +22,7 @@ import {
   getAnilistTrending,
   getAnilistPopular,
   getAnilistByGenre,
+  getAnilistByTag,
   getAnilistStudioWorks,
   anilistTitle,
 } from '../metadata/anilist.js';
@@ -158,7 +159,14 @@ discover.get('/popular', async (c) => {
     );
   } else {
     const type   = (rawType === 'tv' ? 'tv' : 'movie') as 'movie' | 'tv';
-    const raw    = await tmdbDiscover(c.env, type, { sort_by: 'popularity.desc' }, page);
+    const params: Record<string, string | number> = { sort_by: 'popularity.desc' };
+    
+    if (type === 'tv') {
+      params['vote_count.gte']   = 50;
+      params['vote_average.gte'] = 5.0;
+    }
+
+    const raw = await tmdbDiscover(c.env, type, params, page);
     results      = await Promise.all(
       raw.map(async (r) => {
         const title = r.title || r.name || '';
@@ -317,6 +325,10 @@ discover.get('/studio/:studioId', async (c) => {
       const params = buildStudioDiscoverParams(studio, type);
       if (!params) continue;
 
+      if (type === 'tv') {
+        params['vote_count.gte'] = 100;
+      }
+
       const raw = await tmdbDiscover(c.env, type, params, page);
       const items = await Promise.all(
         raw.map(async (r) => {
@@ -390,7 +402,7 @@ discover.get('/:type', async (c) => {
         })
       );
       results = items;
-      hasMore = media.length === 30;
+      hasMore = media.length === 20;
     } else {
       const media = await getAnilistPopular(c.env, page);
       const items = await Promise.all(
@@ -401,13 +413,18 @@ discover.get('/:type', async (c) => {
         })
       );
       results = items;
-      hasMore = media.length === 30;
+      hasMore = media.length === 20;
     }
   } else {
     const mediaType = rawType as 'movie' | 'tv';
     let params: Record<string, string | number | boolean> = {
       sort_by: 'popularity.desc',
     };
+
+    if (mediaType === 'tv') {
+      params['vote_count.gte']   = 50;
+      params['vote_average.gte'] = 5.0;
+    }
 
     if (studio) {
       // Fetch studio from DB
@@ -423,6 +440,10 @@ discover.get('/:type', async (c) => {
         return errorResponse('INVALID_STUDIO', 'Studio not available for this content type.', 400);
       }
       params = { ...params, ...studioParams };
+
+      if (mediaType === 'tv') {
+        params['vote_count.gte'] = 100;
+      }
     }
 
     if (genre) {

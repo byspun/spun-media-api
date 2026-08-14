@@ -24,87 +24,87 @@ export type SpunErrorCode =
   | 'INTERNAL_ERROR';
 
 export interface SpunErrorDetail {
-  code:       SpunErrorCode;
-  error:      string; // The error message
-  why:        string; // Why it happened
-  what_to_do: string; // What to do
+  code:        SpunErrorCode;
+  error:       string; // The error message
+  description: string; // Why it happened
+  action:      string; // What to do
 }
 
 export const ERROR_REGISTRY: Record<SpunErrorCode, Omit<SpunErrorDetail, 'code'>> = {
   INVALID_ID: {
-    error:      'Content not found',
-    why:        'The requested ID does not exist in the Spün library.',
-    what_to_do: 'Verify the ID from a search result or try searching for the title again.'
+    error:       'Content not found',
+    description: 'The requested ID does not exist in the Spün library.',
+    action:      'Verify the ID from a search result or try searching for the title again.'
   },
   ROUTE_NOT_FOUND: {
-    error:      'Endpoint not found',
-    why:        'The requested API endpoint does not exist.',
-    what_to_do: 'Check the API documentation for the correct endpoint path.'
+    error:       'Endpoint not found',
+    description: 'The requested API endpoint does not exist.',
+    action:      'Check the API documentation for the correct endpoint path.'
   },
   MISSING_QUERY: {
-    error:      'Search query required',
-    why:        'No search term was provided in the request.',
-    what_to_do: 'Please provide a valid search term with at least 2 characters.'
+    error:       'Search query required',
+    description: 'No search term was provided in the request.',
+    action:      'Please provide a valid search term with at least 2 characters.'
   },
   BAD_REQUEST: {
-    error:      'Malformed request',
-    why:        'The request contains invalid parameters or is missing required fields.',
-    what_to_do: 'Review the request parameters and try again.'
+    error:       'Malformed request',
+    description: 'The request contains invalid parameters or is missing required fields.',
+    action:      'Review the request parameters and try again.'
   },
   UNAUTHORIZED: {
-    error:      'Authentication required',
-    why:        'This request requires authentication or the provided API key is invalid.',
-    what_to_do: 'Ensure you are sending a valid Authorization header with your request.'
+    error:       'Authentication required',
+    description: 'This request requires authentication or the provided API key is invalid.',
+    action:      'Ensure you are sending a valid Authorization header with your request.'
   },
   FORBIDDEN: {
-    error:      'Permission denied',
-    why:        'You do not have permission to access this specific resource.',
-    what_to_do: 'Upgrade your plan or contact support if you believe this is an error.'
+    error:       'Permission denied',
+    description: 'You do not have permission to access this specific resource.',
+    action:      'Upgrade your plan or contact support if you believe this is an error.'
   },
   SERVICE_OFFLINE: {
-    error:      'Service temporarily unavailable',
-    why:        'A component of the Spün media infrastructure is currently unreachable.',
-    what_to_do: 'This is usually temporary. Please try your request again in a few minutes.'
+    error:       'Service temporarily unavailable',
+    description: 'A component of the Spün media infrastructure is currently unreachable.',
+    action:      'This is usually temporary. Please try your request again in a few minutes.'
   },
   CONTENT_UNAVAILABLE: {
-    error:      'No playable sources found',
-    why:        'We searched all available infrastructure, but no active links were found for this title.',
-    what_to_do: 'This content is currently offline. Our automated systems have been notified to find new sources.'
+    error:       'No playable sources found',
+    description: 'We searched all available infrastructure, but no active links were found for this title.',
+    action:      'This content is currently offline. Our automated systems have been notified to find new sources.'
   },
   REGION_RESTRICTED: {
-    error:      'Content restricted',
-    why:        'This content is not available for access from your current location.',
-    what_to_do: 'Access to this title is limited in your region. Try a different title or check your connection.'
+    error:       'Content restricted',
+    description: 'This content is not available for access from your current location.',
+    action:      'Access to this title is limited in your region. Try a different title or check your connection.'
   },
   SECURE_LINK_ERROR: {
-    error:      'Connection error',
-    why:        'We found the content but could not establish a secure handshake with the source.',
-    what_to_do: 'This is a technical issue with the source. Please report this to the Spün team.'
+    error:       'Connection error',
+    description: 'We found the content but could not establish a secure handshake with the source.',
+    action:      'This is a technical issue with the source. Please report this to the Spün team.'
   },
   GATEWAY_TIMEOUT: {
-    error:      'Request timed out',
-    why:        'The Spün infrastructure took too long to process the request.',
-    what_to_do: 'This usually happens with heavy searches. Please try again in a moment.'
+    error:       'Request timed out',
+    description: 'The Spün infrastructure took too long to process the request.',
+    action:      'This usually happens with heavy searches. Please try again in a moment.'
   },
   RATE_LIMIT: {
-    error:      'Too many requests',
-    why:        'You have exceeded the allowed number of requests in a short period.',
-    what_to_do: 'Please wait a few seconds before making another request.'
+    error:       'Too many requests',
+    description: 'You have exceeded the allowed number of requests in a short period.',
+    action:      'Please wait a few seconds before making another request.'
   },
   MAINTENANCE: {
-    error:      'Scheduled maintenance',
-    why:        'The API is currently undergoing scheduled maintenance.',
-    what_to_do: "We'll be back shortly. Check our status page for updates."
+    error:       'Scheduled maintenance',
+    description: 'The API is currently undergoing scheduled maintenance.',
+    action:      "We'll be back shortly. Check our status page for updates."
   },
   METHOD_NOT_ALLOWED: {
-    error:      'Method not allowed',
-    why:        'You tried to use an invalid HTTP method for this endpoint.',
-    what_to_do: 'Check the API documentation for the supported HTTP methods.'
+    error:       'Method not allowed',
+    description: 'You tried to use an invalid HTTP method for this endpoint.',
+    action:      'Check the API documentation for the supported HTTP methods.'
   },
   INTERNAL_ERROR: {
-    error:      'Unexpected error',
-    why:        'An internal error occurred while processing your request.',
-    what_to_do: 'We are looking into it. Please try again later.'
+    error:       'Unexpected error',
+    description: 'An internal error occurred while processing your request.',
+    action:      'We are looking into it. Please try again later.'
   }
 };
 

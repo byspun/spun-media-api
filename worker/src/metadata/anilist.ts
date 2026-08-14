@@ -190,7 +190,7 @@ export async function isAnimeOnAnilist(env: Env, title: string): Promise<AniList
 
 // ─── Trending ─────────────────────────────────────────────────────────────────
 
-export async function getAnilistTrending(env: Env, page = 1, perPage = 30): Promise<AniListMedia[]> {
+export async function getAnilistTrending(env: Env, page = 1, perPage = 20): Promise<AniListMedia[]> {
   const query = `
     query($page: Int, $perPage: Int) {
       Page(page: $page, perPage: $perPage) {
@@ -206,7 +206,7 @@ export async function getAnilistTrending(env: Env, page = 1, perPage = 30): Prom
 
 // ─── Popular ──────────────────────────────────────────────────────────────────
 
-export async function getAnilistPopular(env: Env, page = 1, perPage = 30): Promise<AniListMedia[]> {
+export async function getAnilistPopular(env: Env, page = 1, perPage = 20): Promise<AniListMedia[]> {
   const query = `
     query($page: Int, $perPage: Int) {
       Page(page: $page, perPage: $perPage) {
@@ -227,7 +227,7 @@ export async function getAnilistSeasonal(
   season: string,
   year:   number,
   page   = 1,
-  perPage = 30
+  perPage = 20
 ): Promise<AniListMedia[]> {
   const query = `
     query($season: MediaSeason, $year: Int, $page: Int, $perPage: Int) {
@@ -250,7 +250,7 @@ export async function getAnilistSeasonal(
 
 // ─── Next season ──────────────────────────────────────────────────────────────
 
-export async function getAnilistNextSeason(env: Env, page = 1, perPage = 30): Promise<AniListMedia[]> {
+export async function getAnilistNextSeason(env: Env, page = 1, perPage = 20): Promise<AniListMedia[]> {
   const { season, year } = getNextSeason();
   const query = `
     query($season: MediaSeason, $year: Int, $page: Int, $perPage: Int) {
@@ -293,7 +293,7 @@ export async function getAnilistUpcoming(env: Env, page = 1, perPage = 20): Prom
 
 // ─── Currently airing ─────────────────────────────────────────────────────────
 
-export async function getAnilistAiring(env: Env, page = 1, perPage = 30): Promise<AniListMedia[]> {
+export async function getAnilistAiring(env: Env, page = 1, perPage = 20): Promise<AniListMedia[]> {
   const query = `
     query($page: Int, $perPage: Int) {
       Page(page: $page, perPage: $perPage) {
@@ -455,7 +455,7 @@ export async function getAnilistRankingsGenre(
 // ─── By genre ─────────────────────────────────────────────────────────────────
 
 export async function getAnilistByGenre(
-  env: Env, genre: string, page = 1, perPage = 30
+  env: Env, genre: string, page = 1, perPage = 20
 ): Promise<AniListMedia[]> {
   const query = `
     query($genre: String, $page: Int, $perPage: Int) {
@@ -479,7 +479,7 @@ export async function getAnilistByGenre(
 // ─── By tag ───────────────────────────────────────────────────────────────────
 
 export async function getAnilistByTag(
-  env: Env, tag: string, page = 1, perPage = 30
+  env: Env, tag: string, page = 1, perPage = 20
 ): Promise<AniListMedia[]> {
   const query = `
     query($tag: String, $page: Int, $perPage: Int) {
@@ -520,7 +520,7 @@ export async function getAnilistFiltered(
     sort?:            string;
   },
   page    = 1,
-  perPage = 30
+  perPage = 20
 ): Promise<AniListMedia[]> {
   const gqlFilters: string[] = ['type: ANIME', 'format_in: [TV, TV_SHORT, MOVIE, OVA, ONA, SPECIAL]'];
   const vars: Record<string, unknown> = { page, perPage };
@@ -571,7 +571,7 @@ export async function getAnilistFiltered(
 // ─── By format ────────────────────────────────────────────────────────────────
 
 export async function getAnilistByFormat(
-  env: Env, format: string, page = 1, perPage = 30
+  env: Env, format: string, page = 1, perPage = 20
 ): Promise<{ media: AniListMedia[]; total: number; hasNextPage: boolean }> {
   const query = `
     query($format: MediaFormat, $page: Int, $perPage: Int) {
@@ -600,7 +600,7 @@ export async function getAnilistByFormat(
 // ─── By demographic (tag-based) ───────────────────────────────────────────────
 
 export async function getAnilistByDemographic(
-  env: Env, demographic: string, page = 1, perPage = 30
+  env: Env, demographic: string, page = 1, perPage = 20
 ): Promise<{ media: AniListMedia[]; total: number; hasNextPage: boolean }> {
   const tag = demographic.charAt(0).toUpperCase() + demographic.slice(1).toLowerCase();
   const query = `
@@ -635,7 +635,7 @@ const SOURCE_MAP: Record<string, string> = {
 };
 
 export async function getAnilistBySource(
-  env: Env, source: string, page = 1, perPage = 30
+  env: Env, source: string, page = 1, perPage = 20
 ): Promise<{ media: AniListMedia[]; total: number; hasNextPage: boolean }> {
   const sourceVal = SOURCE_MAP[source.toLowerCase()] ?? source.toUpperCase();
   const query = `
@@ -662,7 +662,7 @@ export async function getAnilistBySource(
 // ─── Studios ──────────────────────────────────────────────────────────────────
 
 export async function getAnilistStudios(
-  env: Env, query?: string, page = 1, perPage = 30
+  env: Env, query?: string, page = 1, perPage = 20
 ): Promise<{
   studios: Array<{ id: number; name: string; works_count: number }>;
   hasNextPage: boolean;
@@ -697,7 +697,7 @@ export async function getAnilistStudios(
 }
 
 export async function getAnilistStudioWorks(
-  env: Env, studioId: number, page = 1, perPage = 30
+  env: Env, studioId: number, page = 1, perPage = 20
 ): Promise<{
   name: string;
   works_count: number;
