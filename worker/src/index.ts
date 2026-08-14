@@ -23,6 +23,7 @@ import similarRoute   from './routes/similar.js';
 import streamRoute    from './routes/stream.js';
 import downloadRoute  from './routes/download.js';
 import subtitlesRoute from './routes/subtitles.js';
+import proxyRoute     from './routes/proxy.js';
 import utilityRoute   from './routes/utility.js';
 import franchiseRoute from './routes/franchise.js';
 
@@ -69,6 +70,7 @@ v1.route('/similar',    similarRoute);
 v1.route('/stream',     streamRoute);
 v1.route('/download',   downloadRoute);
 v1.route('/subtitles',  subtitlesRoute);
+v1.route('/proxy',      proxyRoute);
 v1.route('/utility',    utilityRoute);
 v1.route('/franchise',  franchiseRoute);
 

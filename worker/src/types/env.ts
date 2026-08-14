@@ -19,8 +19,12 @@ export interface Env {
   // Shared secret for Worker ↔ Render auth
   X_SPUN_SECRET: string;
 
-  // SubDL subtitle API
+  // Subtitle catalog API
   SUBDL_API_KEY: string;
+
+  // Encrypts opaque, expiring subtitle proxy references.
+  // Set with: wrangler secret put SUBTITLE_PROXY_TOKEN_SECRET
+  SUBTITLE_PROXY_TOKEN_SECRET: string;
 
   // TasteDive similar content API
   TASTEDIVE_API_KEY: string;

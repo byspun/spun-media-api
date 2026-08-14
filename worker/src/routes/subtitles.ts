@@ -1,141 +1,143 @@
 // worker/src/routes/subtitles.ts
-// Subtitle endpoints:
-//   GET /subtitles/:spunId?season=&episode=&lang=
-//   GET /subtitle-proxy?url=              — SRT→VTT conversion + CORS proxy
-//
-// Subtitle source: SubDL API
-// SRT files are fetched and converted to VTT on the fly.
+// Subtitle discovery returns only Spün-owned, browser-playable WebVTT proxy URLs.
+// Archive retrieval and SRT conversion happen lazily at /v1/proxy/subtitles.
 
 import { Hono } from 'hono';
 import type { Env } from '../types/env.js';
 import { getBySpunId } from '../identity/resolver.js';
-import { srtToVtt } from '../utils/srtToVtt.js';
+import { createSubtitleProxyToken } from '../proxy-token.js';
 import { jsonResponse, errorResponse } from '../normalizer.js';
 
 const subtitles = new Hono<{ Bindings: Env }>();
 
-const SUBDL_BASE = 'https://api.subdl.com/api/v1';
+const SUBTITLE_CATALOG_BASE = 'https://api.subdl.com/api/v1';
 
-// ─── SubDL response types ─────────────────────────────────────────────────────
-
-interface SubDLSubtitle {
-  sd_id:       string;
-  lang:        string;
-  language:    string;
-  url:         string;
-  full_link:   string;
-  season?:     number;
-  episode?:    number;
-  release_name: string;
+interface SubtitleCatalogItem {
+  lang: string;
+  language: string;
+  url: string;
+  full_link?: string;
+  season?: number;
+  episode?: number;
 }
 
-interface SubDLResponse {
-  status:    boolean;
-  subtitles: SubDLSubtitle[];
+interface SubtitleCatalogResponse {
+  status: boolean;
+  subtitles: SubtitleCatalogItem[];
 }
-
-// ─── Language code normalizer ─────────────────────────────────────────────────
 
 const LANG_MAP: Record<string, string> = {
-  english:    'en',
-  spanish:    'es',
-  french:     'fr',
-  german:     'de',
+  english: 'en',
+  spanish: 'es',
+  french: 'fr',
+  german: 'de',
   portuguese: 'pt',
-  arabic:     'ar',
-  japanese:   'ja',
-  chinese:    'zh',
-  korean:     'ko',
-  italian:    'it',
-  russian:    'ru',
+  arabic: 'ar',
+  japanese: 'ja',
+  chinese: 'zh',
+  korean: 'ko',
+  italian: 'it',
+  russian: 'ru',
 };
 
-function toLangCode(lang: string): string {
-  return LANG_MAP[lang.toLowerCase()] ?? lang.toLowerCase().slice(0, 2);
+function toLangCode(language: string): string {
+  return LANG_MAP[language.toLowerCase()] ?? language.toLowerCase().slice(0, 2);
 }
 
-// ─── GET /subtitles/:spunId ───────────────────────────────────────────────────
+function toArchiveUrl(item: SubtitleCatalogItem): string | null {
+  const candidate = item.full_link || item.url;
+  if (!candidate) return null;
 
+  try {
+    if (candidate.startsWith('https://')) return new URL(candidate).toString();
+    return new URL(candidate, 'https://dl.subdl.com').toString();
+  } catch {
+    return null;
+  }
+}
+
+// Legacy raw-url proxy deliberately retired. Raw archive URLs must never be
+// accepted from a consumer because they can expose a source location or secret.
+subtitles.get('/proxy', async () =>
+  errorResponse('BAD_REQUEST', 'Use the subtitle track URL returned by the subtitles endpoint.', 400),
+);
+
+// GET /v1/subtitles/:spunId?season=&episode=&lang=
 subtitles.get('/:spunId', async (c) => {
-  const spunId  = c.req.param('spunId');
-  const season  = c.req.query('season')  ? parseInt(c.req.query('season')!)  : undefined;
-  const episode = c.req.query('episode') ? parseInt(c.req.query('episode')!) : undefined;
-  const langFilter = c.req.query('lang');
+  const spunId = c.req.param('spunId');
+  const season = c.req.query('season') ? parseInt(c.req.query('season')!, 10) : undefined;
+  const episode = c.req.query('episode') ? parseInt(c.req.query('episode')!, 10) : undefined;
+  const languageFilter = c.req.query('lang');
+
+  if (
+    (season !== undefined && (!Number.isInteger(season) || season < 1)) ||
+    (episode !== undefined && (!Number.isInteger(episode) || episode < 1))
+  ) {
+    return errorResponse('BAD_REQUEST', 'Invalid episode reference.', 400);
+  }
 
   const row = await getBySpunId(c.env, spunId);
   if (!row) return errorResponse('NOT_FOUND', 'Title not found.', 404);
+  if (!c.env.SUBTITLE_PROXY_TOKEN_SECRET) {
+    return errorResponse('SERVICE_OFFLINE', 'Subtitle delivery is unavailable.', 503);
+  }
 
-  // Build SubDL query params
   const params = new URLSearchParams({
-    api_key:    c.env.SUBDL_API_KEY,
-    languages:  langFilter ?? 'EN',
+    api_key: c.env.SUBDL_API_KEY,
+    languages: languageFilter ?? 'EN',
     subs_per_page: '5',
-    type:       row.content_type === 'movie' ? 'movie' : 'tv',
+    type: row.content_type === 'movie' ? 'movie' : 'tv',
   });
 
-  if (row.imdb_id)   params.set('imdb_id', row.imdb_id.replace('tt', ''));
+  if (row.imdb_id) params.set('imdb_id', row.imdb_id.replace('tt', ''));
   else if (row.tmdb_id) params.set('tmdb_id', String(row.tmdb_id));
 
-  if (season  !== undefined) params.set('season_number',  String(season));
+  if (season !== undefined) params.set('season_number', String(season));
   if (episode !== undefined) params.set('episode_number', String(episode));
 
   try {
-    const res = await fetch(`${SUBDL_BASE}/subtitles?${params.toString()}`);
-    if (!res.ok) return errorResponse('SUBDL_ERROR', 'SubDL API error.', 502);
+    const response = await fetch(`${SUBTITLE_CATALOG_BASE}/subtitles?${params.toString()}`);
+    if (!response.ok) return errorResponse('SERVICE_OFFLINE', 'Subtitle catalog unavailable.', 502);
 
-    const data = await res.json() as SubDLResponse;
-    if (!data.status) return jsonResponse({ subtitles: [] });
+    const data = await response.json() as SubtitleCatalogResponse;
+    if (!data.status || !Array.isArray(data.subtitles)) {
+      return jsonResponse({ spun_id: spunId, subtitles: [] });
+    }
 
-    const result = (data.subtitles ?? []).map((s) => ({
-      url:           `https://dl.subdl.com${s.url}`,
-      language:      s.language,
-      language_code: toLangCode(s.language),
-      format:        'srt' as const,
-    }));
+    const origin = new URL(c.req.url).origin;
+    const tracks = await Promise.all(
+      data.subtitles
+        .slice(0, 5)
+        .map(async (item, index) => {
+          const archiveUrl = toArchiveUrl(item);
+          if (!archiveUrl) return null;
 
-    return jsonResponse({ spun_id: spunId, subtitles: result });
-  } catch {
-    return errorResponse('SUBDL_ERROR', 'Failed to fetch subtitles.', 502);
-  }
-});
+          const language = item.language || item.lang || 'Unknown';
+          const languageCode = toLangCode(language);
+          const { token, expiresAt } = await createSubtitleProxyToken(
+            c.env.SUBTITLE_PROXY_TOKEN_SECRET,
+            archiveUrl,
+            languageCode,
+          );
 
-// ─── GET /subtitle-proxy ──────────────────────────────────────────────────────
-// Fetches a remote SRT file, converts it to VTT, and returns it.
-// Allows frontend to load subtitle tracks cross-origin.
+          return {
+            id: `subtitle-${index + 1}`,
+            language,
+            language_code: languageCode,
+            label: language,
+            format: 'vtt' as const,
+            url: `${origin}/v1/proxy/subtitles?t=${encodeURIComponent(token)}`,
+            expires_at: expiresAt,
+          };
+        }),
+    );
 
-subtitles.get('/proxy', async (c) => {
-  const rawUrl = c.req.query('url');
-  if (!rawUrl) return errorResponse('MISSING_URL', 'Missing url param.', 400);
-
-  let url: URL;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    return errorResponse('INVALID_URL', 'Invalid subtitle URL.', 400);
-  }
-
-  // Allowlist: only proxy from known subtitle hosts
-  const ALLOWED_HOSTS = ['dl.subdl.com', 'subdl.com', 'opensubtitles.com'];
-  if (!ALLOWED_HOSTS.some((h) => url.hostname.endsWith(h))) {
-    return errorResponse('FORBIDDEN_HOST', 'Subtitle host not permitted.', 403);
-  }
-
-  try {
-    const res = await fetch(url.toString());
-    if (!res.ok) return errorResponse('FETCH_ERROR', 'Failed to fetch subtitle file.', 502);
-
-    const raw = await res.text();
-    const vtt = raw.trimStart().startsWith('WEBVTT') ? raw : srtToVtt(raw);
-
-    return new Response(vtt, {
-      headers: {
-        'Content-Type':  'text/vtt; charset=utf-8',
-        'Cache-Control': 'public, max-age=86400',
-        'Access-Control-Allow-Origin': '*',
-      },
+    return jsonResponse({
+      spun_id: spunId,
+      subtitles: tracks.filter((track): track is NonNullable<typeof track> => track !== null),
     });
   } catch {
-    return errorResponse('FETCH_ERROR', 'Failed to process subtitle.', 502);
+    return errorResponse('SERVICE_OFFLINE', 'Subtitle catalog unavailable.', 502);
   }
 });
 

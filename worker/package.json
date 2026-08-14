@@ -8,8 +8,9 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "hono": "^4.4.0",
-    "@neondatabase/serverless": "^0.9.4"
+    "@neondatabase/serverless": "^0.9.4",
+    "fflate": "^0.8.3",
+    "hono": "^4.4.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240725.0",
