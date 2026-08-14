@@ -12,6 +12,7 @@ import {
   buildAndCacheTvHome,
   buildAndCacheAnimeHome,
 } from './cron/home.js';
+import { bumpCacheVersion } from './cache.js';
 
 import searchRoute    from './routes/search.js';
 import infoRoute      from './routes/info.js';
@@ -68,6 +69,53 @@ v1.route('/stream',     streamRoute);
 v1.route('/download',   downloadRoute);
 v1.route('/subtitles',  subtitlesRoute);
 v1.route('/utility',    utilityRoute);
+
+// ─── Home Build — Triggers homepage snapshot ──────────────────────────────────
+
+v1.get('/home/build', async (c) => {
+  const secret = c.req.header('X-Spun-Secret');
+  if (!secret || secret !== c.env.X_SPUN_SECRET) {
+    return errorResponse('UNAUTHORIZED', 'Unauthorized', 401);
+  }
+
+  const type = c.req.query('type') || 'all';
+  
+  switch (type) {
+    case 'movie':
+      c.executionCtx.waitUntil(buildAndCacheMovieHome(c.env));
+      break;
+    case 'tv':
+      c.executionCtx.waitUntil(buildAndCacheTvHome(c.env));
+      break;
+    case 'anime':
+      c.executionCtx.waitUntil(buildAndCacheAnimeHome(c.env));
+      break;
+    case 'all':
+    default:
+      c.executionCtx.waitUntil(buildAndCacheGeneralHome(c.env));
+  }
+
+  return c.json({ 
+    success: true, 
+    message: `Homepage build triggered for type: ${type}. It will run in the background.` 
+  });
+});
+
+// ─── Cache Clear — Force clears cache everywhere ──────────────────────────────
+
+v1.get('/cache/clear', async (c) => {
+  const secret = c.req.header('X-Spun-Secret');
+  if (!secret || secret !== c.env.X_SPUN_SECRET) {
+    return errorResponse('UNAUTHORIZED', 'Unauthorized', 401);
+  }
+
+  const nextVersion = await bumpCacheVersion(c.env);
+
+  return c.json({ 
+    success: true, 
+    message: `Cache cleared successfully. New version: ${nextVersion}` 
+  });
+});
 
 // Flat convenience aliases inside /v1
 v1.get('/resolve', (c) => {

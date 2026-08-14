@@ -25,8 +25,35 @@ export const TTL = {
 
 // ─── Cache Version ─────────────────────────────────────────────────────────
 
-// Increment this version (e.g., 'v1' -> 'v2') to force clear all cache keys.
-const CACHE_VERSION = 'v6';
+const DEFAULT_VERSION = 'v6';
+const VERSION_KEY     = 'internal:cache_version';
+
+/**
+ * Gets the current cache version from KV, or falls back to DEFAULT_VERSION.
+ * This is cached in the Worker's memory for performance.
+ */
+let cachedVersion: string | null = null;
+
+async function getCacheVersion(env: Env): Promise<string> {
+  if (cachedVersion) return cachedVersion;
+  
+  const kvVersion = await env.MEDIA_CACHE.get(VERSION_KEY, 'text');
+  cachedVersion = kvVersion || DEFAULT_VERSION;
+  return cachedVersion;
+}
+
+/**
+ * Bumps the cache version in KV.
+ */
+export async function bumpCacheVersion(env: Env): Promise<string> {
+  const current = await getCacheVersion(env);
+  const versionNum = parseInt(current.replace('v', '')) || 6;
+  const next = `v${versionNum + 1}`;
+  
+  await env.MEDIA_CACHE.put(VERSION_KEY, next);
+  cachedVersion = next; // Update local cache
+  return next;
+}
 
 // ─── Key builders ─────────────────────────────────────────────────────────────
 
@@ -73,7 +100,8 @@ export const CacheKeys = {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 export async function kvGet<T>(env: Env, key: string): Promise<T | null> {
-  const fullKey = `${CACHE_VERSION}:${key}`;
+  const version = await getCacheVersion(env);
+  const fullKey = `${version}:${key}`;
   const val = await env.MEDIA_CACHE.get(fullKey, 'text');
   if (!val) return null;
   try {
@@ -89,13 +117,15 @@ export async function kvSet(
   value: unknown,
   ttlSeconds: number
 ): Promise<void> {
-  const fullKey = `${CACHE_VERSION}:${key}`;
+  const version = await getCacheVersion(env);
+  const fullKey = `${version}:${key}`;
   await env.MEDIA_CACHE.put(fullKey, JSON.stringify(value), {
     expirationTtl: ttlSeconds,
   });
 }
 
 export async function kvDel(env: Env, key: string): Promise<void> {
-  const fullKey = `${CACHE_VERSION}:${key}`;
+  const version = await getCacheVersion(env);
+  const fullKey = `${version}:${key}`;
   await env.MEDIA_CACHE.delete(fullKey);
 }
