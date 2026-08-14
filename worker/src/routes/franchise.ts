@@ -39,10 +39,19 @@ franchise.post('/register', async (c) => {
     return errorResponse('NOT_FOUND', 'Franchise not found.', 404);
   }
 
-  const cache_version = await bumpCacheVersion(c.env);
+  let cache_version: string | null = null;
+  try {
+    cache_version = await bumpCacheVersion(c.env);
+  } catch (error) {
+    // Database registration has already succeeded. Cache invalidation is useful
+    // but must not turn that success into an endpoint failure when KV is unavailable.
+    console.error('[Franchise Registration] Cache invalidation deferred', error);
+  }
+
   return jsonResponse({
     success: true,
     ...registration,
+    cache_invalidation: cache_version ? 'completed' : 'deferred',
     cache_version,
   });
 });
