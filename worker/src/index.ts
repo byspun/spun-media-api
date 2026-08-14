@@ -133,7 +133,7 @@ v1.get('/proxy',  (c) => {
 });
 v1.get('/subtitle-proxy', (c) => {
   const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
-  return c.redirect(`/v1/subtitles/proxy${qs}`, 307);
+  return c.redirect(`/v1/proxy/subtitles${qs}`, 307);
 });
 
 // Trending/popular/new/genres/studios flat aliases inside /v1
