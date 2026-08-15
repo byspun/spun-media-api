@@ -53,7 +53,7 @@ utility.get('/health', async (c) => {
 
     const baseUrl = c.env.PROXY_BASE_URL.replace(/\/$/, '');
 
-    const [tmdbRes, anilistRes, jikanRes, providerStatus] = await Promise.all([
+    const [tmdbRes, anilistRes, jikanRes, kitsuRes, providerStatus] = await Promise.all([
       fetch('https://api.themoviedb.org/3/configuration', {
         headers: { Authorization: `Bearer ${c.env.TMDB_BEARER_TOKEN}` },
       }).catch(() => null),
@@ -69,6 +69,10 @@ utility.get('/health', async (c) => {
 
       fetch(`${baseUrl}/api/jikan/anime/1`, {
         headers: { 'x-spun-proxy-secret': c.env.SPUN_PROXY_SECRET ?? '' },
+      }).catch(() => null),
+
+      fetch('https://kitsu.io/api/edge/anime/1', {
+        headers: { Accept: 'application/vnd.api+json' },
       }).catch(() => null),
 
       (async (): Promise<string> => {
@@ -96,8 +100,9 @@ utility.get('/health', async (c) => {
     const tmdbOk    = tmdbRes?.ok ?? false;
     const anilistOk = anilistRes?.ok ?? false;
     const jikanOk   = jikanRes?.ok ?? false;
+    const kitsuOk   = kitsuRes?.ok ?? false;
 
-    const allOk = tmdbOk && anilistOk && jikanOk;
+    const allOk = tmdbOk && anilistOk && jikanOk && kitsuOk;
     const overallStatus = allOk ? 'ok' : 'degraded';
 
     const payload = {
@@ -106,6 +111,7 @@ utility.get('/health', async (c) => {
         tmdb:      tmdbOk    ? 'ok' : 'down',
         anilist:   anilistOk ? 'ok' : 'down',
         jikan:     jikanOk   ? 'ok' : 'down',
+        kitsu:     kitsuOk   ? 'ok' : 'down',
         providers: providerStatus,
       },
     };
@@ -116,7 +122,7 @@ utility.get('/health', async (c) => {
     console.error('[Health] Error:', err);
     return jsonResponse({
       status: 'degraded',
-      services: { tmdb: 'down', anilist: 'down', jikan: 'down', providers: 'ok' },
+      services: { tmdb: 'down', anilist: 'down', jikan: 'down', kitsu: 'down', providers: 'ok' },
     });
   }
 });
