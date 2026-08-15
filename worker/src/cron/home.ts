@@ -621,7 +621,11 @@ export async function buildAnimeHome(env: Env) {
 }
 
 export async function buildGeneralHome(env: Env) {
-  const year = new Date().getFullYear();
+  const today = new Date();
+  const year = today.getFullYear();
+  const futureReleaseCap = new Date(today.getTime() + 90 * 86400000)
+    .toISOString()
+    .slice(0, 10);
   const { season } = getCurrentSeason();
 
   const [
@@ -635,7 +639,11 @@ export async function buildGeneralHome(env: Env) {
     tmdbBinge, tmdbShortWatch, tmdbShortTv, tmdbKDrama,
   ] = await Promise.all([
     getTmdbTrending(env, 'all'),
-    tmdbDiscover(env, 'movie', { sort_by: 'release_date.desc', 'primary_release_date.gte': `${year}-01-01` }),
+    tmdbDiscover(env, 'movie', {
+      sort_by: 'release_date.desc',
+      'primary_release_date.gte': `${year}-01-01`,
+      'primary_release_date.lte': futureReleaseCap,
+    }),
     tmdbDiscover(env, 'tv',    { sort_by: 'popularity.desc', 'air_date.gte': new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0] }),
     getAnilistTrending(env, 1, 20),
     getAnilistAiring(env, 1, 20),
