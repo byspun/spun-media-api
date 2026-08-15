@@ -28,9 +28,9 @@ import {
   getAnilistRankingsPopular,
   getCurrentSeason,
   anilistTitle,
-  getAnilistMedia,
+  getAnilistSummary,
 } from '../metadata/anilist.js';
-import { batchResolveFromTmdb, batchResolveFromAnilist, getBySpunId } from '../identity/resolver.js';
+import { batchResolveFromTmdb, batchResolveFromAnilist, getBySpunId, getBySpunIds } from '../identity/resolver.js';
 import { getJikanAnimeDetail } from '../metadata/jikan.js';
 import { tmdbResultToItem, anilistToItem } from '../normalizer.js';
 import { getDb } from '../db.js';
@@ -143,7 +143,7 @@ async function hydrateHomeItem(env: Env, row: HomeIdentityRow): Promise<ContentI
     }
 
     if (row.content_type === 'anime' && row.anilist_id) {
-      const media = await getAnilistMedia(env, row.anilist_id);
+      const media = await getAnilistSummary(env, row.anilist_id);
       if (media) return anilistToItem(media, row.spun_id);
     }
 
@@ -179,11 +179,12 @@ async function franchiseRow(
   const sorted = [...entries].sort((a, b) => a.order - b.order);
   const filled = sorted.filter((e) => !e.spun_id.includes('xxxxxx'));
 
+  const rows = await getBySpunIds(env, filled.map((entry) => entry.spun_id));
+  const bySpunId = new Map(rows.map((row) => [row.spun_id, row]));
   const items: Array<ContentItem | null> = await Promise.all(
-    filled.map(async (e) => {
-      const row = await getBySpunId(env, e.spun_id);
+    filled.map(async (entry) => {
+      const row = bySpunId.get(entry.spun_id);
       if (!row) return null;
-
       return hydrateHomeItem(env, row);
     })
   );

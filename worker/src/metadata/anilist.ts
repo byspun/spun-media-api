@@ -164,6 +164,21 @@ export interface AniListCharacterEdge {
   }>;
 }
 
+export async function getAnilistSummary(
+  env: Env,
+  anilistId: number,
+): Promise<AniListMedia | null> {
+  const query = `
+    query($id: Int) {
+      Media(id: $id, type: ANIME) {
+        ${MEDIA_FIELDS}
+      }
+    }
+  `;
+  const result = await anilistQuery<{ Media: AniListMedia }>(env, query, { id: anilistId });
+  return result?.Media ?? null;
+}
+
 export async function getAnilistRelations(
   env: Env,
   anilistId: number,

@@ -24,6 +24,12 @@ preview_id = "REPLACE_WITH_KV_PREVIEW_ID"
 # SUBDL_API_KEY              (SubDL subtitle API key)
 # TASTEDIVE_API_KEY          (TasteDive similar content API key)
 
+# Homepage builds use multiple metadata and catalog operations in one invocation.
+# Workers Paid supports up to 10,000 subrequests per invocation; Workers Free remains capped at 50.
+[limits]
+cpu_ms = 30000
+subrequests = 10000
+
 [triggers]
 crons = [
   "0 * * * *",    # full home build — every hour on the hour

@@ -44,7 +44,22 @@ export async function getBySpunId(
   return row;
 }
 
-// ─── Lookup by TMDB ID ────────────────────────────────────────────────────────
+export async function getBySpunIds(
+  env: Env,
+  spunIds: string[],
+): Promise<MediaTitleRow[]> {
+  const uniqueIds = [...new Set(spunIds.filter(Boolean))];
+  if (!uniqueIds.length) return [];
+
+  const sql = getDb(env);
+  return await sql`
+    SELECT * FROM media_titles
+    WHERE spun_id = ANY(${uniqueIds})
+  ` as MediaTitleRow[];
+}
+
+// ─── Lookup by TMDB ID ───────────────────────────────────────────────────────
+
 
 export async function getByTmdbId(
   env:     Env,
@@ -352,23 +367,9 @@ export async function batchResolveFromTmdb(
 ): Promise<MediaTitleRow[]> {
   if (!items.length) return [];
 
-  // 1. Check KV cache first
   const results: MediaTitleRow[] = [];
-  const missingFromKv: typeof items = [];
-
-  await Promise.all(
-    items.map(async (item) => {
-      const cached = await kvGet<MediaTitleRow>(env, `row:tmdb:${type}:${item.id}`);
-      if (cached) results.push(cached);
-      else missingFromKv.push(item);
-    })
-  );
-
-  if (!missingFromKv.length) return results;
-
-  // 2. Check DB for missing items
   const sql = getDb(env);
-  const tmdbIds = missingFromKv.map((i) => i.id);
+  const tmdbIds = items.map((i) => i.id);
   const dbRows = await sql`
     SELECT * FROM media_titles 
     WHERE tmdb_id = ANY(${tmdbIds}) AND content_type = ${type}
@@ -377,50 +378,30 @@ export async function batchResolveFromTmdb(
   results.push(...dbRows);
 
   const foundTmdbIds = new Set(dbRows.map((r) => Number(r.tmdb_id)));
-  const missingFromDb = missingFromKv.filter((i) => !foundTmdbIds.has(i.id));
+  const missingFromDb = items.filter((i) => !foundTmdbIds.has(i.id));
 
   if (!missingFromDb.length) {
-    // Cache the newly found DB rows
-    await Promise.all(
-      dbRows.map((row) => 
-        Promise.all([
-          kvSet(env, `row:${row.spun_id}`, row, TTL.idMap),
-          kvSet(env, `row:tmdb:${type}:${row.tmdb_id}`, row, TTL.idMap),
-        ])
-      )
-    );
     return results;
   }
 
   // 3. Create missing items
-  const newRows = await Promise.all(
-    missingFromDb.map(async (item) => {
-      const spunId = await makeSpunId(item.title, type, item.id);
-      const slug   = makeSlug(item.title);
-      
-      const rows = await sql`
-        INSERT INTO media_titles (spun_id, slug, content_type, title, tmdb_id)
-        VALUES (${spunId}, ${slug}, ${type}, ${item.title}, ${item.id})
-        ON CONFLICT (spun_id) DO UPDATE SET last_accessed_at = NOW()
-        RETURNING *
-      ` as MediaTitleRow[];
-      
-      return rows[0];
-    })
+  const preparedItems = await Promise.all(
+    missingFromDb.map(async (item) => ({
+      item,
+      spunId: await makeSpunId(item.title, type, item.id),
+      slug: makeSlug(item.title),
+    }))
   );
+  const newQueries = preparedItems.map(({ item, spunId, slug }) => sql`
+    INSERT INTO media_titles (spun_id, slug, content_type, title, tmdb_id)
+    VALUES (${spunId}, ${slug}, ${type}, ${item.title}, ${item.id})
+    ON CONFLICT (spun_id) DO UPDATE SET last_accessed_at = NOW()
+    RETURNING *
+  `);
+  const inserted = await sql.transaction(newQueries);
+  const newRows = inserted.map((rows) => rows[0] as MediaTitleRow);
 
   results.push(...newRows);
-
-  // 4. Cache everything new
-  const allNew = [...dbRows, ...newRows];
-  await Promise.all(
-    allNew.map((row) => 
-      Promise.all([
-        kvSet(env, `row:${row.spun_id}`, row, TTL.idMap),
-        kvSet(env, `row:tmdb:${type}:${row.tmdb_id}`, row, TTL.idMap),
-      ])
-    )
-  );
 
   return results;
 }
@@ -434,20 +415,8 @@ export async function batchResolveFromAnilist(
   if (!items.length) return [];
 
   const results: MediaTitleRow[] = [];
-  const missingFromKv: typeof items = [];
-
-  await Promise.all(
-    items.map(async (item) => {
-      const cached = await kvGet<MediaTitleRow>(env, `row:anilist:${item.id}`);
-      if (cached) results.push(cached);
-      else missingFromKv.push(item);
-    })
-  );
-
-  if (!missingFromKv.length) return results;
-
   const sql = getDb(env);
-  const anilistIds = missingFromKv.map((i) => i.id);
+  const anilistIds = items.map((i) => i.id);
   const dbRows = await sql`
     SELECT * FROM media_titles 
     WHERE anilist_id = ANY(${anilistIds}) AND content_type = 'anime'
@@ -456,47 +425,27 @@ export async function batchResolveFromAnilist(
   results.push(...dbRows);
 
   const foundIds = new Set(dbRows.map((r) => Number(r.anilist_id)));
-  const missingFromDb = missingFromKv.filter((i) => !foundIds.has(i.id));
+  const missingFromDb = items.filter((i) => !foundIds.has(i.id));
 
-  if (!missingFromDb.length) {
-    await Promise.all(
-      dbRows.map((row) => 
-        Promise.all([
-          kvSet(env, `row:${row.spun_id}`, row, TTL.idMap),
-          kvSet(env, `row:anilist:${row.anilist_id}`, row, TTL.idMap),
-        ])
-      )
-    );
-    return results;
-  }
+  if (!missingFromDb.length) return results;
 
-  const newRows = await Promise.all(
-    missingFromDb.map(async (item) => {
-      const spunId = await makeSpunId(item.title, 'anime', item.id);
-      const slug   = makeSlug(item.title);
-      
-      const rows = await sql`
-        INSERT INTO media_titles (spun_id, slug, content_type, title, anilist_id, mal_id)
-        VALUES (${spunId}, ${slug}, 'anime', ${item.title}, ${item.id}, ${item.malId ?? null})
-        ON CONFLICT (spun_id) DO UPDATE SET last_accessed_at = NOW()
-        RETURNING *
-      ` as MediaTitleRow[];
-      
-      return rows[0];
-    })
+  const preparedItems = await Promise.all(
+    missingFromDb.map(async (item) => ({
+      item,
+      spunId: await makeSpunId(item.title, 'anime', item.id),
+      slug: makeSlug(item.title),
+    }))
   );
+  const newQueries = preparedItems.map(({ item, spunId, slug }) => sql`
+    INSERT INTO media_titles (spun_id, slug, content_type, title, anilist_id, mal_id)
+    VALUES (${spunId}, ${slug}, 'anime', ${item.title}, ${item.id}, ${item.malId ?? null})
+    ON CONFLICT (spun_id) DO UPDATE SET last_accessed_at = NOW()
+    RETURNING *
+  `);
+  const inserted = await sql.transaction(newQueries);
+  const newRows = inserted.map((rows) => rows[0] as MediaTitleRow);
 
   results.push(...newRows);
-
-  const allNew = [...dbRows, ...newRows];
-  await Promise.all(
-    allNew.map((row) => 
-      Promise.all([
-        kvSet(env, `row:${row.spun_id}`, row, TTL.idMap),
-        kvSet(env, `row:anilist:${row.anilist_id}`, row, TTL.idMap),
-      ])
-    )
-  );
 
   return results;
 }
