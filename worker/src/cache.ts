@@ -153,10 +153,12 @@ export async function updateHomeBuildStatus(
   
   const status: HomeBuildStatus = {
     type,
-    status:      update.status      || current?.status      || 'in_progress',
-    started_at:  update.started_at  || current?.started_at  || new Date().toISOString(),
-    finished_at: update.finished_at || current?.finished_at || null,
-    error:       update.error       || current?.error       || null,
+    status:      update.status      ?? current?.status      ?? 'in_progress',
+    started_at:  update.started_at  ?? current?.started_at  ?? new Date().toISOString(),
+    finished_at: update.finished_at ?? current?.finished_at ?? null,
+    error:       update.error       ?? (update.status === 'in_progress' || update.status === 'completed'
+      ? null
+      : current?.error ?? null),
   };
 
   await kvSet(env, key, status, 3600); // Status expires in 1 hour

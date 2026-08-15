@@ -61,4 +61,15 @@ home.get('/status', async (c) => {
   });
 });
 
+home.get('/*', async (c) => {
+  if (!c.req.path.endsWith('/')) {
+    return errorResponse('ROUTE_NOT_FOUND', 'Endpoint not found', 404);
+  }
+  const cached = await kvGet(c.env, CacheKeys.home('all'));
+  if (!cached) {
+    return errorResponse('SERVICE_OFFLINE', 'Homepage is being built. Try again in a moment.', 503);
+  }
+  return jsonResponse(cached);
+});
+
 export default home;

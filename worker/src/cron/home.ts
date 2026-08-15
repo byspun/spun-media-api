@@ -109,6 +109,86 @@ async function anilistToItems(
   });
 }
 
+function uniqueTmdbResults(rawLists: Array<Array<Record<string, any>>>): Array<Record<string, any>> {
+  const seen = new Set<number>();
+  return rawLists.flat().filter((item) => {
+    const id = Number(item.id);
+    if (!Number.isFinite(id) || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
+}
+
+function uniqueAnilistResults(rawLists: AniListMedia[][]): AniListMedia[] {
+  const seen = new Set<number>();
+  return rawLists.flat().filter((item) => {
+    if (seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
+}
+
+async function resolveTmdbLists(
+  env: Env,
+  rawLists: Array<Array<Record<string, any>>>,
+  type: 'movie' | 'tv',
+): Promise<Map<number, MediaTitleRow>> {
+  const unique = uniqueTmdbResults(rawLists);
+  if (!unique.length) return new Map();
+  const resolveItems = unique.map((r) => ({
+    id: r.id,
+    title: r.title || r.name || '',
+    summary: {
+      year: extractYear(r.release_date || r.first_air_date),
+      rating: typeof r.vote_average === 'number' ? Number(r.vote_average.toFixed(1)) : null,
+      posterPath: tmdbPoster(r.poster_path ?? null),
+    },
+  }));
+  const rows = await batchResolveFromTmdb(env, resolveItems, type);
+  return new Map(rows.map((row) => [Number(row.tmdb_id), row]));
+}
+
+async function resolveAnilistList(
+  env: Env,
+  rawLists: AniListMedia[][],
+): Promise<Map<number, MediaTitleRow>> {
+  const unique = uniqueAnilistResults(rawLists);
+  if (!unique.length) return new Map();
+  const resolveItems = unique.map((m) => ({
+    id: m.id,
+    title: anilistTitle(m),
+    malId: m.idMal ?? undefined,
+    summary: {
+      year: m.startDate?.year ?? null,
+      rating: typeof m.averageScore === 'number' ? Number((m.averageScore / 10).toFixed(1)) : null,
+      posterPath: m.coverImage?.large ?? m.coverImage?.medium ?? null,
+    },
+  }));
+  const rows = await batchResolveFromAnilist(env, resolveItems);
+  return new Map(rows.map((row) => [Number(row.anilist_id), row]));
+}
+
+function mapTmdbItems(
+  raw: Array<Record<string, any>>,
+  rows: Map<number, MediaTitleRow>,
+  type: 'movie' | 'tv',
+): ContentItem[] {
+  return raw.slice(0, ROW_MAX).map((item) => {
+    const row = rows.get(Number(item.id));
+    return tmdbResultToItem(item, row?.spun_id || `pending-${item.id}`, type);
+  });
+}
+
+function mapAnilistItems(
+  raw: AniListMedia[],
+  rows: Map<number, MediaTitleRow>,
+): ContentItem[] {
+  return raw.slice(0, ROW_MAX).map((item) => {
+    const row = rows.get(item.id);
+    return anilistToItem(item, row?.spun_id || `pending-${item.id}`);
+  });
+}
+
 type HomeIdentityRow = Pick<MediaTitleRow, 'spun_id' | 'title' | 'content_type' | 'tmdb_id' | 'anilist_id' | 'mal_id' | 'year' | 'rating' | 'poster_path' | 'summary_synced_at'>;
 
 async function hydrateHomeItem(env: Env, row: HomeIdentityRow): Promise<ContentItem> {
@@ -393,33 +473,21 @@ export async function buildTvHome(env: Env) {
     tmdbDiscover(env, 'tv', { sort_by: 'vote_average.desc', 'first_air_date.lte': '2005-12-31', 'vote_average.gte': 7.5 }),
   ]);
 
+  const tvRows = await resolveTmdbLists(env, [
+    trending, onTheAir, newSeasons, netflix, thisYear, allTimeGreats, bingeWorthy,
+    cantLookAway, comedy, feel, sciFiFantasy, miniseries, hiddenGems, longRunners,
+    kDrama, british, hbo, a24, critAcc, ended, throwback,
+  ], 'tv');
+
   const [
     trendingItems, onAirItems, newItems, netflixItems, thisYearItems, allTimeItems, bingeItems,
     thrillerItems, comedyItems, feelItems, scifiItems, miniItems, hiddenItems, longItems,
     kDramaItems, britishItems, hboItems, a24Items, critItems, endedItems, throwbackItems,
-  ] = await Promise.all([
-    tmdbToItems(env, trending,      'tv'),
-    tmdbToItems(env, onTheAir,      'tv'),
-    tmdbToItems(env, newSeasons,    'tv'),
-    tmdbToItems(env, netflix,       'tv'),
-    tmdbToItems(env, thisYear,      'tv'),
-    tmdbToItems(env, allTimeGreats, 'tv'),
-    tmdbToItems(env, bingeWorthy,   'tv'),
-    tmdbToItems(env, cantLookAway,  'tv'),
-    tmdbToItems(env, comedy,        'tv'),
-    tmdbToItems(env, feel,          'tv'),
-    tmdbToItems(env, sciFiFantasy,  'tv'),
-    tmdbToItems(env, miniseries,    'tv'),
-    tmdbToItems(env, hiddenGems,    'tv'),
-    tmdbToItems(env, longRunners,   'tv'),
-    tmdbToItems(env, kDrama,        'tv'),
-    tmdbToItems(env, british,       'tv'),
-    tmdbToItems(env, hbo,           'tv'),
-    tmdbToItems(env, a24,           'tv'),
-    tmdbToItems(env, critAcc,       'tv'),
-    tmdbToItems(env, ended,         'tv'),
-    tmdbToItems(env, throwback,     'tv'),
-  ]);
+  ] = [
+    trending, onTheAir, newSeasons, netflix, thisYear, allTimeGreats, bingeWorthy,
+    cantLookAway, comedy, feel, sciFiFantasy, miniseries, hiddenGems, longRunners,
+    kDrama, british, hbo, a24, critAcc, ended, throwback,
+  ].map((raw) => mapTmdbItems(raw, tvRows, 'tv'));
 
   const marvelTvRow = await franchiseRow(env, 'marvel-tv', 'Marvel TV Universe', marvelTv);
   const starWarsRow = await franchiseRow(env, 'star-wars', 'Star Wars Universe', starWars);
@@ -609,49 +677,52 @@ export async function buildGeneralHome(env: Env) {
 
   const justAddedItems = await Promise.all(justAddedRaw.map((row) => hydrateHomeItem(env, row)));
 
-  const [
-    tmdbTrendingItems, nowPlayingItems, onAirItems,
-    anilistTrendingItems, airingItems, seasonalItems,
-    tmdbActionItems, anilistActionItems, tmdbComedyItems, anilistComedyItems,
-    tmdbThrillerItems, anilistPsychItems, tmdbFeelItems, anilistSliceItems,
-    tmdbScifiItems, anilistScifiItems, tmdbHorrorItems, anilistDarkItems,
-    animeAllTimeItems, animeSeasonItems, animeShortItems,
-    animeClassicItems, animeOtakuItems, animeFilmItems,
-    tmdbCritItems, tmdbHiddenMovieItems, anilistHiddenItems,
-    tmdbBingeItems, tmdbShortMovieItems, tmdbShortTvItems, tmdbKDramaItems,
-  ] = await Promise.all([
-    tmdbToItems(env, tmdbTrending,    'movie'),
-    tmdbToItems(env, tmdbNowPlaying,  'movie'),
-    tmdbToItems(env, tmdbOnAir,       'tv'),
-    anilistToItems(env, anilistTrending),
-    anilistToItems(env, anilistAiring),
-    anilistToItems(env, anilistSeasonal),
-    tmdbToItems(env, tmdbAction,      'movie'),
-    anilistToItems(env, anilistAction),
-    tmdbToItems(env, tmdbComedy,      'movie'),
-    anilistToItems(env, anilistComedy),
-    tmdbToItems(env, tmdbThriller,    'movie'),
-    anilistToItems(env, anilistPsych),
-    tmdbToItems(env, tmdbFeel,        'movie'),
-    anilistToItems(env, anilistSliceOfLife),
-    tmdbToItems(env, tmdbScifi,       'movie'),
-    anilistToItems(env, anilistScifi),
-    tmdbToItems(env, tmdbHorror,      'movie'),
-    anilistToItems(env, anilistDark),
-    anilistToItems(env, animeAllTime),
-    anilistToItems(env, animeSeason),
-    anilistToItems(env, animeShort),
-    anilistToItems(env, animeClassic),
-    anilistToItems(env, animeOtaku),
-    anilistToItems(env, animeFilms),
-    tmdbToItems(env, tmdbCritAcc,     'movie'),
-    tmdbToItems(env, tmdbHiddenGems,  'movie'),
-    anilistToItems(env, anilistHiddenGems),
-    tmdbToItems(env, tmdbBinge,       'tv'),
-    tmdbToItems(env, tmdbShortWatch,  'movie'),
-    tmdbToItems(env, tmdbShortTv,     'tv'),
-    tmdbToItems(env, tmdbKDrama,      'tv'),
+  const [movieRows, tvRows, animeRows] = await Promise.all([
+    resolveTmdbLists(env, [
+      tmdbTrending, tmdbNowPlaying, tmdbAction, tmdbComedy, tmdbThriller,
+      tmdbFeel, tmdbScifi, tmdbHorror, tmdbCritAcc, tmdbHiddenGems,
+      tmdbShortWatch,
+    ], 'movie'),
+    resolveTmdbLists(env, [tmdbOnAir, tmdbBinge, tmdbShortTv, tmdbKDrama], 'tv'),
+    resolveAnilistList(env, [
+      anilistTrending, anilistAiring, anilistSeasonal, anilistAction,
+      anilistComedy, anilistPsych, anilistSliceOfLife, anilistScifi,
+      anilistDark, animeAllTime, animeSeason, animeShort, animeClassic,
+      animeOtaku, animeFilms, anilistHiddenGems,
+    ]),
   ]);
+
+  const tmdbTrendingItems = mapTmdbItems(tmdbTrending, movieRows, 'movie');
+  const nowPlayingItems = mapTmdbItems(tmdbNowPlaying, movieRows, 'movie');
+  const onAirItems = mapTmdbItems(tmdbOnAir, tvRows, 'tv');
+  const anilistTrendingItems = mapAnilistItems(anilistTrending, animeRows);
+  const airingItems = mapAnilistItems(anilistAiring, animeRows);
+  const seasonalItems = mapAnilistItems(anilistSeasonal, animeRows);
+  const tmdbActionItems = mapTmdbItems(tmdbAction, movieRows, 'movie');
+  const anilistActionItems = mapAnilistItems(anilistAction, animeRows);
+  const tmdbComedyItems = mapTmdbItems(tmdbComedy, movieRows, 'movie');
+  const anilistComedyItems = mapAnilistItems(anilistComedy, animeRows);
+  const tmdbThrillerItems = mapTmdbItems(tmdbThriller, movieRows, 'movie');
+  const anilistPsychItems = mapAnilistItems(anilistPsych, animeRows);
+  const tmdbFeelItems = mapTmdbItems(tmdbFeel, movieRows, 'movie');
+  const anilistSliceItems = mapAnilistItems(anilistSliceOfLife, animeRows);
+  const tmdbScifiItems = mapTmdbItems(tmdbScifi, movieRows, 'movie');
+  const anilistScifiItems = mapAnilistItems(anilistScifi, animeRows);
+  const tmdbHorrorItems = mapTmdbItems(tmdbHorror, movieRows, 'movie');
+  const anilistDarkItems = mapAnilistItems(anilistDark, animeRows);
+  const animeAllTimeItems = mapAnilistItems(animeAllTime, animeRows);
+  const animeSeasonItems = mapAnilistItems(animeSeason, animeRows);
+  const animeShortItems = mapAnilistItems(animeShort, animeRows);
+  const animeClassicItems = mapAnilistItems(animeClassic, animeRows);
+  const animeOtakuItems = mapAnilistItems(animeOtaku, animeRows);
+  const animeFilmItems = mapAnilistItems(animeFilms, animeRows);
+  const tmdbCritItems = mapTmdbItems(tmdbCritAcc, movieRows, 'movie');
+  const tmdbHiddenMovieItems = mapTmdbItems(tmdbHiddenGems, movieRows, 'movie');
+  const anilistHiddenItems = mapAnilistItems(anilistHiddenGems, animeRows);
+  const tmdbBingeItems = mapTmdbItems(tmdbBinge, tvRows, 'tv');
+  const tmdbShortMovieItems = mapTmdbItems(tmdbShortWatch, movieRows, 'movie');
+  const tmdbShortTvItems = mapTmdbItems(tmdbShortTv, tvRows, 'tv');
+  const tmdbKDramaItems = mapTmdbItems(tmdbKDrama, tvRows, 'tv');
 
   const trendingMixed   = merge(tmdbTrendingItems, anilistTrendingItems).slice(0, ROW_MAX);
   const newThisWeek     = merge(nowPlayingItems, onAirItems, seasonalItems).slice(0, ROW_MAX);
