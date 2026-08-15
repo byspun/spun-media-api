@@ -18,15 +18,7 @@ async function forwardToRender(
   params: URLSearchParams
 ): Promise<Response> {
   if (!env.RENDER_BACKEND_URL) {
-    return new Response(
-      JSON.stringify({
-        error: {
-          code:    'PROVIDERS_NOT_READY',
-          message: 'Download providers are not configured yet. Coming in Session 2.',
-        },
-      }),
-      { status: 503, headers: { 'Content-Type': 'application/json' } }
-    );
+    return errorResponse('SERVICE_OFFLINE', 'Download service is not configured yet.', 503);
   }
 
   const url = `${env.RENDER_BACKEND_URL}${path}?${params.toString()}`;

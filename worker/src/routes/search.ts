@@ -12,9 +12,9 @@ import { Hono } from 'hono';
 import type { Env } from '../types/env.js';
 import type { ContentItem, ContentType } from '../types/index.js';
 import { kvGet, kvSet, CacheKeys, TTL } from '../cache.js';
-import { searchTmdb } from '../metadata/tmdb.js';
+import { searchTmdb, extractYear, tmdbPoster } from '../metadata/tmdb.js';
 import { searchAnilist, isAnimeOnAnilist, anilistTitle } from '../metadata/anilist.js';
-import { resolveFromTmdb, resolveFromAnilist } from '../identity/resolver.js';
+import { batchResolveFromTmdb, batchResolveFromAnilist } from '../identity/resolver.js';
 import { tmdbResultToItem, anilistToItem, jsonResponse, errorResponse } from '../normalizer.js';
 
 const search = new Hono<{ Bindings: Env }>();
@@ -54,31 +54,81 @@ async function filterOutAnime(
 
 // ─── Build ContentItem from TMDB result with spun_id ─────────────────────────
 
-async function tmdbToItem(
+async function batchTmdbItems(
   env: Env,
-  raw: Awaited<ReturnType<typeof searchTmdb>>['results'][0]
-): Promise<ContentItem | null> {
-  if (raw.media_type !== 'movie' && raw.media_type !== 'tv') return null;
+  raw: Array<Awaited<ReturnType<typeof searchTmdb>>['results'][0]>,
+): Promise<ContentItem[]> {
+  const valid = raw.filter((item) => item.media_type === 'movie' || item.media_type === 'tv');
+  if (!valid.length) return [];
 
-  const title    = (raw.title || raw.name || '');
-  const row      = await resolveFromTmdb(env, raw.id, raw.media_type, title);
-  const type: ContentType = raw.media_type;
+  const byType = (type: 'movie' | 'tv') => valid.filter((item) => item.media_type === type);
+  const resolveType = async (
+    items: typeof valid,
+    type: 'movie' | 'tv',
+  ): Promise<Map<string, string>> => {
+    if (!items.length) return new Map();
+    const rows = await batchResolveFromTmdb(
+      env,
+      items.map((item) => ({
+        id: item.id,
+        title: item.title || item.name || '',
+        summary: {
+          year: extractYear(item.release_date || item.first_air_date),
+          rating: typeof item.vote_average === 'number'
+            ? Number(item.vote_average.toFixed(1))
+            : null,
+          posterPath: tmdbPoster(item.poster_path ?? null),
+        },
+      })),
+      type,
+    );
+    return new Map(rows.map((row) => [
+      `${type}:${Number(row.tmdb_id)}`,
+      row.spun_id,
+    ]));
+  };
 
-  return tmdbResultToItem(raw, row.spun_id, type);
-}
+  const [movieIds, tvIds] = await Promise.all([
+    resolveType(byType('movie'), 'movie'),
+    resolveType(byType('tv'), 'tv'),
+  ]);
 
-// ─── Build ContentItem from AniList result with spun_id ──────────────────────
-
-async function anilistToItemWithId(
-  env:   Env,
-  media: Awaited<ReturnType<typeof searchAnilist>>['media'][0]
-): Promise<ContentItem> {
-  const title = anilistTitle(media);
-  const row   = await resolveFromAnilist(env, media.id, title, {
-    malId: media.idMal ?? undefined,
+  return valid.map((item) => {
+    const type = item.media_type as 'movie' | 'tv';
+    const spunId = (type === 'movie' ? movieIds : tvIds).get(`${type}:${item.id}`)
+      || `pending-${item.id}`;
+    return tmdbResultToItem(item, spunId, type);
   });
-  return anilistToItem(media, row.spun_id);
 }
+
+// ─── Build ContentItems from AniList results with batched registration ───────
+
+async function batchAnilistItems(
+  env: Env,
+  media: Awaited<ReturnType<typeof searchAnilist>>['media'],
+): Promise<ContentItem[]> {
+  if (!media.length) return [];
+
+  const rows = await batchResolveFromAnilist(
+    env,
+    media.map((item) => ({
+      id: item.id,
+      title: anilistTitle(item),
+      malId: item.idMal ?? undefined,
+      summary: {
+        year: item.startDate?.year ?? null,
+        rating: typeof item.averageScore === 'number'
+          ? Number((item.averageScore / 10).toFixed(1))
+          : null,
+        posterPath: item.coverImage?.large ?? item.coverImage?.medium ?? null,
+      },
+    })),
+  );
+  const byId = new Map(rows.map((row) => [Number(row.anilist_id), row.spun_id]));
+
+  return media.map((item) => anilistToItem(item, byId.get(item.id) || `pending-${item.id}`));
+}
+
 
 // ─── GET /search ──────────────────────────────────────────────────────────────
 
@@ -103,7 +153,7 @@ search.get('/', async (c) => {
   if (normalizedType === 'anime') {
     // AniList only
     const { media, hasNextPage } = await searchAnilist(c.env, q, page, 20);
-    const items = await Promise.all(media.map((m) => anilistToItemWithId(c.env, m)));
+    const items = await batchAnilistItems(c.env, media);
     results      = items;
     totalPages   = hasNextPage ? page + 1 : page;
     totalResults = items.length;
@@ -111,18 +161,16 @@ search.get('/', async (c) => {
   } else if (normalizedType === 'movie') {
     const tmdb       = await searchTmdb(c.env, q, page);
     const movieOnly  = tmdb.results.filter((r) => r.media_type === 'movie');
-    const noAnime    = await filterOutAnime(c.env, movieOnly);
-    const items      = await Promise.all(noAnime.map((r) => tmdbToItem(c.env, r as any)));
-    results          = items.filter((i): i is ContentItem => i !== null);
+    results          = await batchTmdbItems(c.env, movieOnly as any);
+
     totalPages       = tmdb.total_pages;
     totalResults     = tmdb.total_results;
 
   } else if (normalizedType === 'tv') {
     const tmdb      = await searchTmdb(c.env, q, page);
     const tvOnly    = tmdb.results.filter((r) => r.media_type === 'tv');
-    const noAnime   = await filterOutAnime(c.env, tvOnly);
-    const items     = await Promise.all(noAnime.map((r) => tmdbToItem(c.env, r as any)));
-    results         = items.filter((i): i is ContentItem => i !== null);
+    results         = await batchTmdbItems(c.env, tvOnly as any);
+
     totalPages      = tmdb.total_pages;
     totalResults    = tmdb.total_results;
 
@@ -133,12 +181,13 @@ search.get('/', async (c) => {
       searchAnilist(c.env, q, page, 10),
     ]);
 
-    // Filter TMDB: remove anime entries (they come from AniList instead)
-    const noAnime = await filterOutAnime(c.env, tmdb.results as any[]);
+    // TMDB supplies movies and TV; AniList supplies anime. Avoid one metadata
+    // check per TMDB result so fresh all-search requests stay within limits.
+    const noAnime = tmdb.results as any[];
 
     const [tmdbItems, animeItems] = await Promise.all([
-      Promise.all(noAnime.map((r) => tmdbToItem(c.env, r as any))),
-      Promise.all(anilistResult.media.map((m) => anilistToItemWithId(c.env, m))),
+      batchTmdbItems(c.env, noAnime as any),
+      batchAnilistItems(c.env, anilistResult.media),
     ]);
 
     // Interleave: movies/TV first, then anime
@@ -184,8 +233,8 @@ search.get('/suggestions', async (c) => {
   const noAnime = await filterOutAnime(c.env, tmdb.results.slice(0, 10) as any[]);
 
   const [tmdbItems, animeItems] = await Promise.all([
-    Promise.all(noAnime.slice(0, 5).map((r) => tmdbToItem(c.env, r as any))),
-    Promise.all(anilistResult.media.slice(0, 5).map((m) => anilistToItemWithId(c.env, m))),
+    batchTmdbItems(c.env, noAnime.slice(0, 5) as any),
+    batchAnilistItems(c.env, anilistResult.media.slice(0, 5)),
   ]);
 
   const suggestions = [
@@ -211,9 +260,7 @@ search.get('/movie', async (c) => {
 
   const tmdb      = await searchTmdb(c.env, q, page);
   const movieOnly = tmdb.results.filter((r) => r.media_type === 'movie');
-  const noAnime   = await filterOutAnime(c.env, movieOnly);
-  const items     = await Promise.all(noAnime.map((r) => tmdbToItem(c.env, r as any)));
-  const results   = items.filter((i): i is ContentItem => i !== null);
+  const results   = await batchTmdbItems(c.env, movieOnly as any);
 
   const payload = { page, total_pages: tmdb.total_pages, total_results: tmdb.total_results, results };
   await kvSet(c.env, cacheKey, payload, TTL.search);
@@ -233,9 +280,7 @@ search.get('/tv', async (c) => {
 
   const tmdb    = await searchTmdb(c.env, q, page);
   const tvOnly  = tmdb.results.filter((r) => r.media_type === 'tv');
-  const noAnime = await filterOutAnime(c.env, tvOnly);
-  const items   = await Promise.all(noAnime.map((r) => tmdbToItem(c.env, r as any)));
-  const results = items.filter((i): i is ContentItem => i !== null);
+  const results = await batchTmdbItems(c.env, tvOnly as any);
 
   const payload = { page, total_pages: tmdb.total_pages, total_results: tmdb.total_results, results };
   await kvSet(c.env, cacheKey, payload, TTL.search);
@@ -254,7 +299,7 @@ search.get('/anime', async (c) => {
   if (cached) return jsonResponse(cached);
 
   const { media, hasNextPage } = await searchAnilist(c.env, q, page, 20);
-  const items = await Promise.all(media.map((m) => anilistToItemWithId(c.env, m)));
+  const items = await batchAnilistItems(c.env, media);
 
   const payload = { page, total_pages: hasNextPage ? page + 1 : page, total_results: items.length, results: items };
   await kvSet(c.env, cacheKey, payload, TTL.search);
