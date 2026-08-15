@@ -4,9 +4,16 @@
 // resolving spun_ids in batch, and caching the final results in KV.
 
 import type { Env } from '../types/env.js';
-import type { AniListMedia, ContentItem } from '../types/index.js';
+import type { AniListMedia, ContentItem, MediaTitleRow } from '../types/index.js';
 import { kvSet, CacheKeys, TTL, updateHomeBuildStatus } from '../cache.js';
-import { getTmdbTrending, tmdbDiscover } from '../metadata/tmdb.js';
+import {
+  getTmdbTrending,
+  tmdbDiscover,
+  getTmdbMovieDetail,
+  getTmdbTvDetail,
+  tmdbPoster,
+  extractYear,
+} from '../metadata/tmdb.js';
 import {
   getAnilistTrending,
   getAnilistAiring,
@@ -21,8 +28,10 @@ import {
   getAnilistRankingsPopular,
   getCurrentSeason,
   anilistTitle,
+  getAnilistMedia,
 } from '../metadata/anilist.js';
 import { batchResolveFromTmdb, batchResolveFromAnilist, getBySpunId } from '../identity/resolver.js';
+import { getJikanAnimeDetail } from '../metadata/jikan.js';
 import { tmdbResultToItem, anilistToItem } from '../normalizer.js';
 import { getDb } from '../db.js';
 
@@ -90,6 +99,75 @@ async function anilistToItems(
   });
 }
 
+type HomeIdentityRow = Pick<MediaTitleRow, 'spun_id' | 'title' | 'content_type' | 'tmdb_id' | 'anilist_id' | 'mal_id'>;
+
+async function hydrateHomeItem(env: Env, row: HomeIdentityRow): Promise<ContentItem> {
+  const fallback: ContentItem = {
+    spun_id: row.spun_id,
+    type: row.content_type,
+    title: row.title,
+    year: null,
+    rating: null,
+    poster: null,
+  };
+
+  try {
+    if (row.content_type === 'movie' && row.tmdb_id) {
+      const detail = await getTmdbMovieDetail(env, row.tmdb_id);
+      if (!detail) return fallback;
+      return {
+        spun_id: row.spun_id,
+        type: 'movie',
+        title: detail.title || row.title,
+        year: extractYear(detail.release_date),
+        rating: typeof detail.vote_average === 'number'
+          ? Number(detail.vote_average.toFixed(1))
+          : null,
+        poster: tmdbPoster(detail.poster_path ?? null),
+      };
+    }
+
+    if (row.content_type === 'tv' && row.tmdb_id) {
+      const detail = await getTmdbTvDetail(env, row.tmdb_id);
+      if (!detail) return fallback;
+      return {
+        spun_id: row.spun_id,
+        type: 'tv',
+        title: detail.name || row.title,
+        year: extractYear(detail.first_air_date),
+        rating: typeof detail.vote_average === 'number'
+          ? Number(detail.vote_average.toFixed(1))
+          : null,
+        poster: tmdbPoster(detail.poster_path ?? null),
+      };
+    }
+
+    if (row.content_type === 'anime' && row.anilist_id) {
+      const media = await getAnilistMedia(env, row.anilist_id);
+      if (media) return anilistToItem(media, row.spun_id);
+    }
+
+    if (row.content_type === 'anime' && row.mal_id) {
+      const detail = await getJikanAnimeDetail(env, row.mal_id);
+      if (detail) {
+        const year = detail.year ?? (detail.aired?.from ? Number(detail.aired.from.slice(0, 4)) : null);
+        return {
+          spun_id: row.spun_id,
+          type: 'anime',
+          title: detail.title_english || detail.title || row.title,
+          year: Number.isFinite(year) ? year : null,
+          rating: typeof detail.score === 'number' ? Number(detail.score.toFixed(1)) : null,
+          poster: detail.images?.jpg?.large_image_url ?? detail.images?.jpg?.image_url ?? null,
+        };
+      }
+    }
+  } catch (err) {
+    console.error(`[Home] Metadata hydration failed for ${row.spun_id}:`, err);
+  }
+
+  return fallback;
+}
+
 // ─── Franchise row builder ────────────────────────────────────────────────────
 
 async function franchiseRow(
@@ -106,14 +184,7 @@ async function franchiseRow(
       const row = await getBySpunId(env, e.spun_id);
       if (!row) return null;
 
-      return {
-        spun_id: e.spun_id,
-        type:    row.content_type as 'movie' | 'tv' | 'anime',
-        title:   row.title       ?? '',
-        year:    null,
-        rating:  null,
-        poster:  null,
-      } satisfies ContentItem;
+      return hydrateHomeItem(env, row);
     })
   );
 
@@ -141,14 +212,7 @@ async function buildHero(
       try {
         const row = await getBySpunId(env, o.spun_id);
         if (row) {
-          hero.push({
-            spun_id: o.spun_id,
-            type:    row.content_type as 'movie' | 'tv' | 'anime',
-            title:   row.title       ?? '',
-            year:    null,
-            rating:  null,
-            poster:  null,
-          });
+          hero.push(await hydrateHomeItem(env, row));
           seen.add(o.spun_id);
         }
       } catch { /* skip */ }
@@ -515,20 +579,13 @@ export async function buildGeneralHome(env: Env) {
 
   const db = getDb(env);
   const justAddedRaw = await db`
-    SELECT spun_id, title, content_type
+    SELECT spun_id, title, content_type, tmdb_id, anilist_id, mal_id
     FROM media_titles
-    ORDER BY created_at DESC 
+    ORDER BY created_at DESC
     LIMIT 20
-  ` as any[];
+  ` as HomeIdentityRow[];
 
-  const justAddedItems: ContentItem[] = justAddedRaw.map((r) => ({
-    spun_id: r.spun_id,
-    type:    r.content_type as 'movie' | 'tv' | 'anime',
-    title:   r.title        ?? '',
-    year:    null,
-    rating:  null,
-    poster:  null,
-  }));
+  const justAddedItems = await Promise.all(justAddedRaw.map((row) => hydrateHomeItem(env, row)));
 
   const [
     tmdbTrendingItems, nowPlayingItems, onAirItems,
