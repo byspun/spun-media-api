@@ -83,25 +83,38 @@ v1.get('/home/build', async (c) => {
   }
 
   const type = c.req.query('type') || 'all';
+  const wait = c.req.query('wait') === 'true';
   
-  switch (type) {
-    case 'movie':
-      c.executionCtx.waitUntil(buildAndCacheMovieHome(c.env));
-      break;
-    case 'tv':
-      c.executionCtx.waitUntil(buildAndCacheTvHome(c.env));
-      break;
-    case 'anime':
-      c.executionCtx.waitUntil(buildAndCacheAnimeHome(c.env));
-      break;
-    case 'all':
-    default:
-      c.executionCtx.waitUntil(buildAndCacheGeneralHome(c.env));
+  const buildPromise = (async () => {
+    switch (type) {
+      case 'movie': return buildAndCacheMovieHome(c.env);
+      case 'tv':    return buildAndCacheTvHome(c.env);
+      case 'anime': return buildAndCacheAnimeHome(c.env);
+      case 'all':
+      default:      return buildAndCacheGeneralHome(c.env);
+    }
+  })();
+
+  if (wait) {
+    try {
+      await buildPromise;
+      return c.json({
+        success: true,
+        message: `Homepage build completed for type: ${type}.`,
+        type
+      });
+    } catch (err) {
+      return errorResponse('INTERNAL_ERROR', `Homepage build failed for type: ${type}.`, 500);
+    }
   }
+
+  c.executionCtx.waitUntil(buildPromise);
 
   return c.json({ 
     success: true, 
-    message: `Homepage build triggered for type: ${type}. It will run in the background.` 
+    message: `Homepage build triggered for type: ${type}. It will run in the background. Estimated completion: 15-30 seconds.`,
+    status_url: `/v1/home/status`,
+    type
   });
 });
 

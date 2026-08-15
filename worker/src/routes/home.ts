@@ -47,4 +47,18 @@ home.get('/', async (c) => {
   return jsonResponse(cached);
 });
 
+home.get('/status', async (c) => {
+  const types = ['all', 'movie', 'tv', 'anime'];
+  const statuses = await Promise.all(
+    types.map(async (type) => {
+      const status = await kvGet(c.env, CacheKeys.homeBuildStatus(type));
+      return { type, status: status || { status: 'never_run', started_at: null, finished_at: null, error: null } };
+    })
+  );
+
+  return jsonResponse({
+    builds: statuses
+  });
+});
+
 export default home;

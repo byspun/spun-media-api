@@ -100,6 +100,7 @@ export const CacheKeys = {
   animeFillers:     (spunId: string, page: number)       => `anime:fillers:${spunId}:${page}`,
   resolve:          (field: string, value: string)       => `resolve:${field}:${value}`,
   health:           ()                                   => `health:status`,
+  homeBuildStatus:  (type: string)                       => `internal:build_status:home:${type}`,
 } as const;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -132,6 +133,33 @@ export async function kvSet(
     // Silent fail on quota/write errors to keep the API functional
     console.error('[KV Error] kvSet failed:', err);
   }
+}
+
+export interface HomeBuildStatus {
+  type:        string;
+  status:      'in_progress' | 'completed' | 'failed';
+  started_at:  string;
+  finished_at: string | null;
+  error:       string | null;
+}
+
+export async function updateHomeBuildStatus(
+  env: Env,
+  type: string,
+  update: Partial<HomeBuildStatus>
+): Promise<void> {
+  const key = CacheKeys.homeBuildStatus(type);
+  const current = await kvGet<HomeBuildStatus>(env, key);
+  
+  const status: HomeBuildStatus = {
+    type,
+    status:      update.status      || current?.status      || 'in_progress',
+    started_at:  update.started_at  || current?.started_at  || new Date().toISOString(),
+    finished_at: update.finished_at || current?.finished_at || null,
+    error:       update.error       || current?.error       || null,
+  };
+
+  await kvSet(env, key, status, 3600); // Status expires in 1 hour
 }
 
 export async function kvDel(env: Env, key: string): Promise<void> {

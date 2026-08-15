@@ -5,7 +5,7 @@
 
 import type { Env } from '../types/env.js';
 import type { AniListMedia, ContentItem } from '../types/index.js';
-import { kvSet, CacheKeys, TTL } from '../cache.js';
+import { kvSet, CacheKeys, TTL, updateHomeBuildStatus } from '../cache.js';
 import { getTmdbTrending, tmdbDiscover } from '../metadata/tmdb.js';
 import {
   getAnilistTrending,
@@ -624,21 +624,53 @@ export async function buildGeneralHome(env: Env) {
 // ─── Cache Wrappers ───────────────────────────────────────────────────────────
 
 export async function buildAndCacheGeneralHome(env: Env) {
-  const payload = await buildGeneralHome(env);
-  await kvSet(env, CacheKeys.home('all'), payload, TTL.home);
+  try {
+    await updateHomeBuildStatus(env, 'all', { status: 'in_progress', started_at: new Date().toISOString(), finished_at: null, error: null });
+    const payload = await buildGeneralHome(env);
+    await kvSet(env, CacheKeys.home('all'), payload, TTL.home);
+    await updateHomeBuildStatus(env, 'all', { status: 'completed', finished_at: new Date().toISOString() });
+  } catch (err) {
+    console.error('[Build Error] General Home:', err);
+    await updateHomeBuildStatus(env, 'all', { status: 'failed', finished_at: new Date().toISOString(), error: String(err) });
+    throw err;
+  }
 }
 
 export async function buildAndCacheMovieHome(env: Env) {
-  const payload = await buildMovieHome(env);
-  await kvSet(env, CacheKeys.home('movie'), payload, TTL.home);
+  try {
+    await updateHomeBuildStatus(env, 'movie', { status: 'in_progress', started_at: new Date().toISOString(), finished_at: null, error: null });
+    const payload = await buildMovieHome(env);
+    await kvSet(env, CacheKeys.home('movie'), payload, TTL.home);
+    await updateHomeBuildStatus(env, 'movie', { status: 'completed', finished_at: new Date().toISOString() });
+  } catch (err) {
+    console.error('[Build Error] Movie Home:', err);
+    await updateHomeBuildStatus(env, 'movie', { status: 'failed', finished_at: new Date().toISOString(), error: String(err) });
+    throw err;
+  }
 }
 
 export async function buildAndCacheTvHome(env: Env) {
-  const payload = await buildTvHome(env);
-  await kvSet(env, CacheKeys.home('tv'), payload, TTL.home);
+  try {
+    await updateHomeBuildStatus(env, 'tv', { status: 'in_progress', started_at: new Date().toISOString(), finished_at: null, error: null });
+    const payload = await buildTvHome(env);
+    await kvSet(env, CacheKeys.home('tv'), payload, TTL.home);
+    await updateHomeBuildStatus(env, 'tv', { status: 'completed', finished_at: new Date().toISOString() });
+  } catch (err) {
+    console.error('[Build Error] TV Home:', err);
+    await updateHomeBuildStatus(env, 'tv', { status: 'failed', finished_at: new Date().toISOString(), error: String(err) });
+    throw err;
+  }
 }
 
 export async function buildAndCacheAnimeHome(env: Env) {
-  const payload = await buildAnimeHome(env);
-  await kvSet(env, CacheKeys.home('anime'), payload, TTL.home);
+  try {
+    await updateHomeBuildStatus(env, 'anime', { status: 'in_progress', started_at: new Date().toISOString(), finished_at: null, error: null });
+    const payload = await buildAnimeHome(env);
+    await kvSet(env, CacheKeys.home('anime'), payload, TTL.home);
+    await updateHomeBuildStatus(env, 'anime', { status: 'completed', finished_at: new Date().toISOString() });
+  } catch (err) {
+    console.error('[Build Error] Anime Home:', err);
+    await updateHomeBuildStatus(env, 'anime', { status: 'failed', finished_at: new Date().toISOString(), error: String(err) });
+    throw err;
+  }
 }
