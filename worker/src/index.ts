@@ -65,7 +65,6 @@ const v1 = new Hono<{ Bindings: Env }>();
 v1.route('/search',     searchRoute);
 v1.route('/info',       infoRoute);
 v1.route('/discover',   discoverRoute);
-v1.route('/home',       homeRoute);
 v1.route('/anime',      animeRoute);
 v1.route('/similar',    similarRoute);
 v1.route('/stream',     streamRoute);
@@ -147,6 +146,8 @@ v1.get('/cache/clear', async (c) => {
     message: `Cache cleared successfully. New version: ${nextVersion}` 
   });
 });
+
+v1.route('/home',       homeRoute);
 
 // Flat convenience aliases inside /v1
 v1.get('/resolve', (c) => {
