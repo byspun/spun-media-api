@@ -515,8 +515,8 @@ export async function buildGeneralHome(env: Env) {
 
   const db = getDb(env);
   const justAddedRaw = await db`
-    SELECT spun_id, title, content_type, year, rating, poster_path 
-    FROM media_titles 
+    SELECT spun_id, title, content_type
+    FROM media_titles
     ORDER BY created_at DESC 
     LIMIT 20
   ` as any[];
@@ -525,9 +525,9 @@ export async function buildGeneralHome(env: Env) {
     spun_id: r.spun_id,
     type:    r.content_type as 'movie' | 'tv' | 'anime',
     title:   r.title        ?? '',
-    year:    r.year         ?? null,
-    rating:  r.rating       ?? null,
-    poster:  r.poster_path  ?? null,
+    year:    null,
+    rating:  null,
+    poster:  null,
   }));
 
   const [
