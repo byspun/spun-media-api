@@ -42,6 +42,8 @@ import {
   getAnilistStudios,
   getAnilistStudioWorks,
   getAnilistMedia,
+  getAnilistRelations,
+  getAnilistCharacters,
   anilistTitle,
 } from '../metadata/anilist.js';
 import { getJikanThemes, getJikanFillers } from '../metadata/jikan.js';
@@ -458,29 +460,34 @@ anime.get('/:spunId/franchise', async (c) => {
     return errorResponse('NOT_FOUND', 'Anime not found.', 404);
   }
 
-  const media = await getAnilistMedia(c.env, row.anilist_id);
-  if (!media) return errorResponse('UPSTREAM_ERROR', 'Could not fetch metadata.', 502);
+  const relationEdges = await getAnilistRelations(c.env, row.anilist_id);
+  if (!relationEdges) return errorResponse('UPSTREAM_ERROR', 'Could not fetch metadata.', 502);
 
-  const relationEdges = (media.relations?.edges ?? [])
-    .filter((e: any) => e.node?.type === 'ANIME')
-    .sort((a: any, b: any) => (a.node.startDate?.year ?? 9999) - (b.node.startDate?.year ?? 9999));
+  const filteredEdges = relationEdges
+    .filter((e) => e.node?.type === 'ANIME')
+    .sort((a, b) => (a.node.startDate?.year ?? 9999) - (b.node.startDate?.year ?? 9999));
 
-  const franchise = await Promise.all(
-    relationEdges.map(async (edge: any, i: number) => {
+  const settled = await Promise.allSettled(
+    filteredEdges.map(async (edge, i) => {
       const node  = edge.node;
-      const title = node.title?.english || node.title?.romaji || '';
+      const title = node.title?.english || node.title?.romaji || node.title?.userPreferred || '';
+      if (!title) return null;
       const relRow = await resolveFromAnilist(c.env, node.id, title);
       return {
         order:    i + 1,
         spun_id:  relRow.spun_id,
         title,
-        year:     node.startDate?.year     ?? null,
-        format:   node.format              ?? null,
-        poster:   node.coverImage?.large   ?? null,
+        year:     node.startDate?.year ?? null,
+        format:   node.format ?? null,
+        poster:   node.coverImage?.large ?? null,
         relation: edge.relationType,
         note:     null,
       };
     })
+  );
+
+  const franchise = settled.flatMap((result) =>
+    result.status === 'fulfilled' && result.value !== null ? [result.value] : []
   );
 
   return jsonResponse({ spun_id: spunId, franchise });
@@ -496,15 +503,15 @@ anime.get('/:spunId/characters', async (c) => {
     return errorResponse('NOT_FOUND', 'Anime not found.', 404);
   }
 
-  const media = await getAnilistMedia(c.env, row.anilist_id);
-  if (!media) return errorResponse('UPSTREAM_ERROR', 'Could not fetch metadata.', 502);
+  const characterEdges = await getAnilistCharacters(c.env, row.anilist_id);
+  if (!characterEdges) return errorResponse('UPSTREAM_ERROR', 'Could not fetch metadata.', 502);
 
-  const characters = (media.characters?.edges ?? []).map((edge: any) => {
+  const characters = characterEdges.map((edge) => {
     const va = edge.voiceActors?.[0];
     return {
       image:     edge.node.image?.large ?? null,
-      character: edge.node.name?.full   ?? null,
-      name:      va?.name?.full         ?? edge.node.name?.full ?? '',
+      character: edge.node.name?.full ?? null,
+      name:      va?.name?.full ?? edge.node.name?.full ?? '',
     };
   });
 

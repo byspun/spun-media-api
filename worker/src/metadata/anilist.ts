@@ -139,6 +139,109 @@ export async function getAnilistMedia(env: Env, anilistId: number): Promise<AniL
   return result?.Media ?? null;
 }
 
+export interface AniListRelationEdge {
+  relationType: string;
+  node: {
+    id: number;
+    title: { english: string | null; romaji: string | null; userPreferred: string | null };
+    format: string | null;
+    status: string | null;
+    coverImage: { large: string | null };
+    averageScore: number | null;
+    startDate: { year: number | null } | null;
+    type: string;
+  };
+}
+
+export interface AniListCharacterEdge {
+  node: {
+    name: { full: string };
+    image: { large: string | null };
+  };
+  voiceActors: Array<{
+    name: { full: string };
+    image: { large: string | null };
+  }>;
+}
+
+export async function getAnilistRelations(
+  env: Env,
+  anilistId: number,
+): Promise<AniListRelationEdge[] | null> {
+  const query = `
+    query($id: Int) {
+      Media(id: $id, type: ANIME) {
+        relations {
+          edges {
+            relationType
+            node {
+              id
+              title { english romaji userPreferred }
+              format
+              status
+              coverImage { large }
+              averageScore
+              startDate { year }
+              type
+            }
+          }
+        }
+      }
+    }
+  `;
+  const result = await anilistQuery<{ Media: { relations?: { edges: AniListRelationEdge[] } } }>(env, query, { id: anilistId });
+  return result?.Media?.relations?.edges ?? null;
+}
+
+export async function getAnilistCharacters(
+  env: Env,
+  anilistId: number,
+): Promise<AniListCharacterEdge[] | null> {
+  const query = `
+    query($id: Int) {
+      Media(id: $id, type: ANIME) {
+        characters(role: MAIN, sort: [RELEVANCE, ID], perPage: 15) {
+          edges {
+            node { name { full } image { large } }
+            voiceActors(language: JAPANESE) { name { full } image { large } }
+          }
+        }
+      }
+    }
+  `;
+  const result = await anilistQuery<{ Media: { characters?: { edges: AniListCharacterEdge[] } } }>(env, query, { id: anilistId });
+  return result?.Media?.characters?.edges ?? null;
+}
+
+export async function getAnilistRecommendations(
+  env: Env,
+  anilistId: number,
+): Promise<AniListMedia[] | null> {
+  const query = `
+    query($id: Int) {
+      Media(id: $id, type: ANIME) {
+        recommendations(perPage: 10, sort: [RATING_DESC, ID]) {
+          nodes {
+            mediaRecommendation {
+              id
+              title { english romaji userPreferred }
+              format
+              coverImage { large }
+              averageScore
+              startDate { year }
+              genres
+            }
+          }
+        }
+      }
+    }
+  `;
+  const result = await anilistQuery<{ Media: { recommendations?: { nodes: Array<{ mediaRecommendation: AniListMedia }> } } }>(env, query, { id: anilistId });
+  return result?.Media?.recommendations?.nodes
+    ?.map((node) => node.mediaRecommendation)
+    .filter(Boolean) ?? null;
+}
+
 // ─── Search ───────────────────────────────────────────────────────────────────
 
 export async function searchAnilist(

@@ -10,7 +10,7 @@ import type { ContentItem } from '../types/index.js';
 import { kvGet, kvSet, TTL } from '../cache.js';
 import { getBySpunId, resolveFromTmdb, resolveFromAnilist } from '../identity/resolver.js';
 import { searchTmdb, tmdbFetch } from '../metadata/tmdb.js';
-import { getAnilistMedia, anilistTitle } from '../metadata/anilist.js';
+import { getAnilistRecommendations, anilistTitle } from '../metadata/anilist.js';
 import { anilistToItem, tmdbResultToItem, jsonResponse, errorResponse } from '../normalizer.js';
 
 const similar = new Hono<{ Bindings: Env }>();
@@ -213,20 +213,19 @@ similar.get('/anime/:spunId', async (c) => {
     return errorResponse('INVALID_TYPE', 'This endpoint is for anime only.', 400);
   }
 
-  const media = await getAnilistMedia(c.env, row.anilist_id);
-  if (!media) return errorResponse('UPSTREAM_ERROR', 'Could not fetch metadata.', 502);
+  const recommendations = await getAnilistRecommendations(c.env, row.anilist_id);
+  if (!recommendations) return errorResponse('UPSTREAM_ERROR', 'Could not fetch metadata.', 502);
 
-  const recNodes = (media.recommendations?.nodes ?? []).slice(0, 20);
-  const items = await Promise.all(
-    recNodes
-      .filter((node: any) => node.mediaRecommendation)
-      .map(async (node: any) => {
-        const rec = node.mediaRecommendation;
-        const title = anilistTitle(rec);
-        const relRow = await resolveFromAnilist(c.env, rec.id, title);
-        return anilistToItem(rec, relRow.spun_id);
-      })
+  const settled = await Promise.allSettled(
+    recommendations.slice(0, 20).map(async (rec) => {
+      const title = anilistTitle(rec);
+      const relRow = await resolveFromAnilist(c.env, rec.id, title);
+      return anilistToItem(rec, relRow.spun_id);
+    })
   );
+  const items = settled
+    .filter((result): result is PromiseFulfilledResult<ContentItem> => result.status === 'fulfilled')
+    .map((result) => result.value);
 
   const payload = { spun_id: spunId, results: items };
   await kvSet(c.env, cacheKey, payload, TTL.metadata);
