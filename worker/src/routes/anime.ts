@@ -520,11 +520,11 @@ anime.get('/:spunId/characters', async (c) => {
 
 // ─── GET /anime/:spunId/related ───────────────────────────────────────────────
 // Handled in info route — mounted separately as /anime/:spunId/related
-// to avoid duplication. Redirect to /info/:spunId/related.
+// to avoid duplication. Redirect to the mounted /v1/info/:spunId/related route.
 
 anime.get('/:spunId/related', async (c) => {
   const spunId = c.req.param('spunId');
-  return c.redirect(`/info/${spunId}/related`, 307);
+  return c.redirect(`/v1/info/${spunId}/related`, 307);
 });
 
 export default anime;
