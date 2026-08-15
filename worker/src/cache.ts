@@ -33,12 +33,18 @@ const VERSION_KEY     = 'internal:cache_version';
  * This is cached in the Worker's memory for performance.
  */
 let cachedVersion: string | null = null;
+let cachedVersionAt = 0;
+const CACHE_VERSION_REFRESH_MS = 1000;
 
 async function getCacheVersion(env: Env): Promise<string> {
-  if (cachedVersion) return cachedVersion;
-  
+  const now = Date.now();
+  if (cachedVersion && now - cachedVersionAt < CACHE_VERSION_REFRESH_MS) {
+    return cachedVersion;
+  }
+
   const kvVersion = await env.MEDIA_CACHE.get(VERSION_KEY, 'text');
   cachedVersion = kvVersion || DEFAULT_VERSION;
+  cachedVersionAt = now;
   return cachedVersion;
 }
 
@@ -52,7 +58,8 @@ export async function bumpCacheVersion(env: Env): Promise<string> {
   
   try {
     await env.MEDIA_CACHE.put(VERSION_KEY, next);
-    cachedVersion = next; // Update local cache
+    cachedVersion = next;
+    cachedVersionAt = Date.now();
   } catch (err) {
     console.error('[KV Error] Failed to bump cache version:', err);
   }
