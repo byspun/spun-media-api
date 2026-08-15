@@ -140,6 +140,27 @@ export async function getByMalId(
   return row;
 }
 
+export async function getByKitsuId(
+  env:     Env,
+  kitsuId: number,
+): Promise<MediaTitleRow | null> {
+  const cacheKey = `row:kitsu:${kitsuId}`;
+  const cached = await kvGet<MediaTitleRow>(env, cacheKey);
+  if (cached) return cached;
+
+  const sql = getDb(env);
+  const rows = await sql`
+    SELECT * FROM media_titles
+    WHERE kitsu_id = ${kitsuId} AND content_type = 'anime'
+    LIMIT 1
+  `;
+  if (!rows.length) return null;
+
+  const row = rows[0] as MediaTitleRow;
+  await kvSet(env, cacheKey, row, TTL.idMap);
+  return row;
+}
+
 export async function getByAnilistId(
   env:       Env,
   anilistId: number
@@ -307,6 +328,90 @@ export async function resolveFromAnilist(
   return row;
 }
 
+// ─── Register or retrieve — Kitsu anime ───────────────────────────────────────
+
+export async function resolveFromKitsu(
+  env:     Env,
+  kitsuId: number,
+  title:   string,
+  params: {
+    anilistId?: number | null;
+    malId?:     number | null;
+    tmdbId?:    number | null;
+    tvdbId?:    number | null;
+    summary?:   TitleSummary;
+  } = {},
+): Promise<MediaTitleRow> {
+  const existing = await getByKitsuId(env, kitsuId);
+  if (existing) {
+    const sql = getDb(env);
+    const updated = await sql`
+      UPDATE media_titles
+      SET anilist_id = COALESCE(anilist_id, ${params.anilistId ?? null}),
+          mal_id = COALESCE(mal_id, ${params.malId ?? null}),
+          tmdb_id = COALESCE(tmdb_id, ${params.tmdbId ?? null}),
+          tvdb_id = COALESCE(tvdb_id, ${params.tvdbId ?? null})
+      WHERE spun_id = ${existing.spun_id}
+      RETURNING *
+    `;
+    const row = (updated[0] as MediaTitleRow | undefined) ?? existing;
+    await kvSet(env, `row:kitsu:${kitsuId}`, row, TTL.idMap);
+    return persistSummaryIfMissing(env, row, params.summary);
+  }
+
+  const linked = params.anilistId
+    ? await getByAnilistId(env, params.anilistId)
+    : params.malId
+      ? await getByMalId(env, params.malId)
+      : null;
+
+  if (linked) {
+    const sql = getDb(env);
+    const updated = await sql`
+      UPDATE media_titles
+      SET kitsu_id = COALESCE(kitsu_id, ${kitsuId}),
+          tmdb_id = COALESCE(tmdb_id, ${params.tmdbId ?? null}),
+          tvdb_id = COALESCE(tvdb_id, ${params.tvdbId ?? null})
+      WHERE spun_id = ${linked.spun_id}
+      RETURNING *
+    `;
+    const row = (updated[0] as MediaTitleRow | undefined) ?? linked;
+    await Promise.all([
+      kvSet(env, `row:${row.spun_id}`, row, TTL.idMap),
+      kvSet(env, `row:kitsu:${kitsuId}`, row, TTL.idMap),
+    ]);
+    return persistSummaryIfMissing(env, row, params.summary);
+  }
+
+  const spunId = await makeSpunId(title, 'anime', kitsuId);
+  const slug = makeSlug(title);
+  const sql = getDb(env);
+  const rows = await sql`
+    INSERT INTO media_titles (
+      spun_id, slug, content_type, title,
+      tmdb_id, anilist_id, mal_id, tvdb_id, kitsu_id,
+      year, rating, poster_path, summary_synced_at
+    )
+    VALUES (
+      ${spunId}, ${slug}, 'anime', ${title},
+      ${params.tmdbId ?? null}, ${params.anilistId ?? null},
+      ${params.malId ?? null}, ${params.tvdbId ?? null}, ${kitsuId},
+      ${params.summary?.year ?? null}, ${params.summary?.rating ?? null},
+      ${params.summary?.posterPath ?? null}, NOW()
+    )
+    ON CONFLICT (spun_id) DO UPDATE
+      SET kitsu_id = COALESCE(media_titles.kitsu_id, EXCLUDED.kitsu_id),
+          last_accessed_at = NOW()
+    RETURNING *
+  `;
+  const row = rows[0] as MediaTitleRow;
+  await Promise.all([
+    kvSet(env, `row:${row.spun_id}`, row, TTL.idMap),
+    kvSet(env, `row:kitsu:${kitsuId}`, row, TTL.idMap),
+  ]);
+  return row;
+}
+
 // ─── Register or retrieve — MAL anime ─────────────────────────────────────────
 
 export async function resolveFromMal(
@@ -351,6 +456,24 @@ export async function resolveFromMal(
     kvSet(env, `row:mal:${malId}`, row, TTL.idMap),
   ]);
   return row;
+}
+
+// ─── Update Kitsu ID after discovery ──────────────────────────────────────────
+
+export async function linkKitsuId(
+  env:     Env,
+  spunId:  string,
+  kitsuId: number,
+): Promise<void> {
+  const sql = getDb(env);
+  await sql`
+    UPDATE media_titles SET kitsu_id = ${kitsuId}
+    WHERE spun_id = ${spunId} AND kitsu_id IS NULL
+  `;
+  await Promise.all([
+    kvDel(env, `row:${spunId}`),
+    kvDel(env, `row:kitsu:${kitsuId}`),
+  ]);
 }
 
 // ─── Update MAL ID after discovery ───────────────────────────────────────────

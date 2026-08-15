@@ -7,7 +7,12 @@
 
 import { Hono } from 'hono';
 import type { Env } from '../types/env.js';
-import type { RelatedEntry, RelatedResponse } from '../types/index.js';
+import type {
+  EpisodeInfo,
+  EpisodesResponse,
+  RelatedEntry,
+  RelatedResponse,
+} from '../types/index.js';
 import { kvGet, kvSet, CacheKeys, TTL } from '../cache.js';
 import { getBySpunId } from '../identity/resolver.js';
 import {
@@ -16,12 +21,19 @@ import {
   getTmdbSeasonDetail,
   tmdbProfile,
 } from '../metadata/tmdb.js';
-import { getAnilistMedia } from '../metadata/anilist.js';
-import { getJikanEpisodes } from '../metadata/jikan.js';
+import { getAnilistMedia, anilistTitle } from '../metadata/anilist.js';
+import {
+  findKitsuAnimeByExternalId,
+  getKitsuAnime,
+  getKitsuAnimeEpisodes,
+  type KitsuEpisode,
+} from '../metadata/kitsu.js';
+import { linkKitsuId } from '../identity/resolver.js';
 import {
   normalizeMovieInfo,
   normalizeTvInfo,
   normalizeAnimeInfo,
+  normalizeKitsuInfo,
   normalizeTvEpisodes,
   anilistToItem,
   jsonResponse,
@@ -34,6 +46,45 @@ import {
 import { getMembershipSummaries, getRelationshipGroups } from '../relationships.js';
 
 const info = new Hono<{ Bindings: Env }>();
+
+function normalizeKitsuEpisodes(
+  spunId: string,
+  episodes: KitsuEpisode[],
+  requestedSeason?: number,
+  airingOnly = false,
+): EpisodesResponse {
+  const grouped = new Map<number, EpisodeInfo[]>();
+  const now = new Date();
+
+  for (const episode of episodes) {
+    const attrs = episode.attributes;
+    const season = attrs.seasonNumber ?? 1;
+    if (requestedSeason !== undefined && season !== requestedSeason) continue;
+    if (airingOnly && attrs.airdate && new Date(attrs.airdate) > now) continue;
+
+    const list = grouped.get(season) ?? [];
+    list.push({
+      number: attrs.number ?? attrs.relativeNumber ?? list.length + 1,
+      season,
+      title: attrs.canonicalTitle ?? attrs.titles?.en_us ?? attrs.titles?.en_jp ?? null,
+      overview: attrs.description ?? attrs.synopsis ?? null,
+      thumbnail: attrs.thumbnail?.original ?? attrs.thumbnail?.large ?? attrs.thumbnail?.medium ?? null,
+      runtime: attrs.length ?? null,
+      air_date: attrs.airdate ?? null,
+    });
+    grouped.set(season, list);
+  }
+
+  const seasons = [...grouped.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([season, seasonEpisodes]) => ({
+      season,
+      count: seasonEpisodes.length,
+      episodes: seasonEpisodes.sort((a, b) => a.number - b.number),
+    }));
+
+  return { spun_id: spunId, type: 'anime', seasons };
+}
 
 // ─── GET /info/:spunId ────────────────────────────────────────────────────────
 
@@ -92,6 +143,20 @@ info.get('/:spunId', async (c) => {
     await kvSet(c.env, cacheKey, payload, ttl);
     return jsonResponse(payload);
 
+  } else if (row.content_type === 'anime' && row.kitsu_id) {
+    const anime = await getKitsuAnime(row.kitsu_id);
+    if (!anime) return errorResponse('UPSTREAM_ERROR', 'Could not fetch metadata.', 502);
+
+    const animeInfo = normalizeKitsuInfo(spunId, anime);
+    try {
+      animeInfo.part_of = await getMembershipSummaries(c.env, row);
+    } catch (err) {
+      console.error('[Info] Kitsu relationship context failed:', err);
+    }
+    payload = animeInfo;
+    await kvSet(c.env, cacheKey, payload, TTL.metadata);
+    return jsonResponse(payload);
+
   } else {
     return errorResponse('MISSING_EXTERNAL_ID', 'Title has no external ID mapped.', 500);
   }
@@ -105,7 +170,7 @@ info.get('/:spunId', async (c) => {
 info.get('/:spunId/episodes', async (c) => {
   const spunId   = c.req.param('spunId');
   const season   = c.req.query('season');
-  const cacheKey = CacheKeys.episodes(spunId);
+  const cacheKey = CacheKeys.episodes(spunId, season ?? 'all');
   const cached   = await kvGet(c.env, cacheKey);
   if (cached) return jsonResponse(cached);
 
@@ -151,61 +216,91 @@ info.get('/:spunId/episodes', async (c) => {
     return jsonResponse(payload);
   }
 
-  if (row.content_type === 'anime' && row.anilist_id) {
-    const media = await getAnilistMedia(c.env, row.anilist_id);
-    if (!media) return errorResponse('UPSTREAM_ERROR', 'Could not fetch metadata.', 502);
-
-    const malId = media.idMal ?? row.mal_id;
-    if (!malId) {
-      // No MAL ID — return episode count stubs from AniList
-      const episodeCount = media.episodes ?? 0;
-      const payload = {
-        spun_id: spunId,
-        type:    'anime',
-        seasons: [{
-          season:   1,
-          count:    episodeCount,
-          episodes: Array.from({ length: episodeCount }, (_, i) => ({
-            number:    i + 1,
-            season:    1,
-            title:     null,
-            overview:  null,
-            thumbnail: null,
-            runtime:   null,
-            air_date:  null,
-          })),
-        }],
-      };
-      return jsonResponse(payload);
+  if (row.content_type === 'anime') {
+    const media = row.anilist_id ? await getAnilistMedia(c.env, row.anilist_id) : null;
+    const titleHint = media ? anilistTitle(media) : row.title;
+    let kitsuAnime = null;
+    try {
+      kitsuAnime = row.kitsu_id ? await getKitsuAnime(row.kitsu_id) : null;
+      // Discover and persist Kitsu through the canonical AniList mapping when needed.
+      if (!kitsuAnime && row.anilist_id) {
+        kitsuAnime = await findKitsuAnimeByExternalId('anilist/anime', row.anilist_id, titleHint);
+        if (kitsuAnime) linkKitsuId(c.env, spunId, kitsuAnime.id).catch(() => {});
+      }
+    } catch (err) {
+      console.error('[Info] Kitsu anime lookup failed; using fallback:', err);
     }
 
-    // Fetch full episode list from Jikan
-    const episodes   = await getJikanEpisodes(c.env, malId);
-    const isAiring   = media.status === 'RELEASING';
+    const isAiring = media?.status === 'RELEASING'
+      || kitsuAnime?.attributes.status?.toUpperCase() === 'CURRENT';
 
-    // For airing shows, only include aired episodes
-    const filtered = isAiring
-      ? episodes.filter((ep) => ep.aired && new Date(ep.aired) <= new Date())
-      : episodes;
+    if (kitsuAnime) {
+      try {
+        const kitsuResult = await getKitsuAnimeEpisodes(kitsuAnime.id, 0, 20);
+        if (kitsuResult.episodes.length) {
+          const payload = normalizeKitsuEpisodes(
+            spunId,
+            kitsuResult.episodes,
+            season ? parseInt(season, 10) : undefined,
+            isAiring,
+          );
+          if (payload.seasons.length || season) {
+            const ttl = isAiring ? TTL.episodesAiring : TTL.episodes;
+            await kvSet(c.env, cacheKey, payload, ttl);
+            return jsonResponse(payload);
+          }
+        }
+      } catch (err) {
+        console.error('[Info] Kitsu episode lookup failed; using TMDB fallback:', err);
+      }
+    }
 
-    const payload = {
+    // TMDB is the fallback episodic source for anime rows with a mapped TV ID.
+    if (row.tmdb_id) {
+      const tv = await getTmdbTvDetail(c.env, row.tmdb_id);
+      if (tv) {
+        const realSeasons = tv.seasons.filter((s) => s.season_number > 0);
+        const targets = season
+          ? realSeasons.filter((s) => s.season_number === parseInt(season, 10))
+          : realSeasons;
+        const details: Array<{ season: any; airingFilter: boolean }> = [];
+        for (let i = 0; i < targets.length; i += 5) {
+          const chunk = targets.slice(i, i + 5);
+          const fetched = await Promise.all(
+            chunk.map((item) => getTmdbSeasonDetail(c.env, row.tmdb_id!, item.season_number)),
+          );
+          fetched.forEach((detail) => {
+            if (detail) details.push({ season: detail, airingFilter: isAiring });
+          });
+        }
+        const payload = normalizeTvEpisodes(spunId, details);
+        if (payload.seasons.length || season) {
+          const ttl = isAiring ? TTL.episodesAiring : TTL.episodes;
+          await kvSet(c.env, cacheKey, payload, ttl);
+          return jsonResponse(payload);
+        }
+      }
+    }
+
+    // Last-resort stable shape from AniList’s known episode count.
+    const episodeCount = media?.episodes ?? kitsuAnime?.attributes.episodeCount ?? 0;
+    const payload: EpisodesResponse = {
       spun_id: spunId,
-      type:    'anime',
+      type: 'anime',
       seasons: [{
-        season:   1,
-        count:    filtered.length,
-        episodes: filtered.map((ep) => ({
-          number:    ep.mal_id,
-          season:    1,
-          title:     ep.title      ?? null,
-          overview:  null,
+        season: 1,
+        count: episodeCount,
+        episodes: Array.from({ length: episodeCount }, (_, i) => ({
+          number: i + 1,
+          season: 1,
+          title: null,
+          overview: null,
           thumbnail: null,
-          runtime:   null,
-          air_date:  ep.aired      ?? null,
+          runtime: null,
+          air_date: null,
         })),
       }],
     };
-
     const ttl = isAiring ? TTL.episodesAiring : TTL.episodes;
     await kvSet(c.env, cacheKey, payload, ttl);
     return jsonResponse(payload);

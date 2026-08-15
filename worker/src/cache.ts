@@ -71,7 +71,7 @@ export async function bumpCacheVersion(env: Env): Promise<string> {
 
 export const CacheKeys = {
   info:             (spunId: string)                     => `info:${spunId}`,
-  episodes:         (spunId: string)                     => `episodes:${spunId}`,
+  episodes:         (spunId: string, season = 'all')    => `episodes:${spunId}:${season}`,
   cast:             (spunId: string)                     => `cast:${spunId}`,
   related:          (spunId: string)                     => `related:${spunId}`,
   search:           (q: string, type: string, page: number) =>

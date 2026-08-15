@@ -321,6 +321,7 @@ export interface MediaTitleRow {
   mal_id:          number | null;
   imdb_id:         string | null;
   tvdb_id:         number | null;
+  kitsu_id:        number | null;
   year:            number | null;
   rating:          number | null;
   poster_path:     string | null;

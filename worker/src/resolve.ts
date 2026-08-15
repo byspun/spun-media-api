@@ -9,6 +9,7 @@ import {
   findTmdbByExternalId,
   getTmdbMovieDetail,
   getTmdbTvDetail,
+  searchTmdb,
   tmdbPoster,
   extractYear,
   type TmdbMovieDetail,
@@ -18,6 +19,14 @@ import {
 import { getAnilistMedia, anilistTitle } from './metadata/anilist.js';
 import { getJikanAnimeDetail } from './metadata/jikan.js';
 import {
+  getKitsuAnime,
+  KitsuUnavailableError,
+  kitsuMappingId,
+  kitsuRating,
+  kitsuTitle,
+  kitsuType,
+} from './metadata/kitsu.js';
+import {
   getByAnilistId,
   getByImdbId,
   getByMalId,
@@ -26,10 +35,12 @@ import {
   resolveFromAnilist,
   resolveFromMal,
   resolveFromTmdb,
+  resolveFromKitsu,
+  getByKitsuId,
 } from './identity/resolver.js';
 import { anilistToItem, tmdbResultToItem } from './normalizer.js';
 
-export type ResolveNamespace = 'tmdb' | 'imdb' | 'tvdb' | 'anilist' | 'mal';
+export type ResolveNamespace = 'tmdb' | 'imdb' | 'tvdb' | 'anilist' | 'mal' | 'kitsu';
 
 function storedSummaryItem(row: MediaTitleRow): ContentItem | null {
   if (!row.summary_synced_at) return null;
@@ -55,6 +66,7 @@ export const RESOLVE_NAMESPACES: ResolveNamespaceInfo[] = [
   { namespace: 'tvdb', content_types: ['tv'], parameter: 'id' },
   { namespace: 'anilist', content_types: ['anime'], parameter: 'id' },
   { namespace: 'mal', content_types: ['anime'], parameter: 'id' },
+  { namespace: 'kitsu', content_types: ['anime'], parameter: 'id' },
 ];
 
 const RESOLVE_TIMEOUT_MS = 10_000;
@@ -228,6 +240,111 @@ async function resolveAnilist(env: Env, id: number): Promise<ContentItem> {
   return anilistToItem(media, row.spun_id);
 }
 
+function comparableTitle(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+async function findTmdbForKitsu(
+  env: Env,
+  anime: Awaited<ReturnType<typeof getKitsuAnime>>,
+): Promise<number | null> {
+  if (!anime) return null;
+  const title = kitsuTitle(anime);
+  const year = anime.attributes.startDate ? Number(anime.attributes.startDate.slice(0, 4)) : null;
+  const expectedType = kitsuType(anime);
+  const search = await withTimeout(searchTmdb(env, title, 1));
+  const candidates = search.results.filter((candidate) => {
+    const candidateTitle = candidate.media_type === 'movie' ? candidate.title : candidate.name;
+    if (!candidateTitle || candidate.media_type !== expectedType) return false;
+    if (comparableTitle(candidateTitle) !== comparableTitle(title)) return false;
+    const candidateDate = candidate.media_type === 'movie'
+      ? candidate.release_date
+      : candidate.first_air_date;
+    if (!year || !candidateDate) return true;
+    return Math.abs(Number(candidateDate.slice(0, 4)) - year) <= 1;
+  });
+  return candidates.length === 1 ? candidates[0].id : null;
+}
+
+async function resolveKitsu(env: Env, id: number): Promise<ContentItem> {
+  let anime: Awaited<ReturnType<typeof getKitsuAnime>>;
+  try {
+    anime = await withTimeout(getKitsuAnime(id, ['mappings']));
+  } catch (error) {
+    if (error instanceof KitsuUnavailableError) fail('RESOLVE_METADATA_UNAVAILABLE', 503);
+    throw error;
+  }
+  if (!anime) fail('RESOLVE_CONTENT_NOT_FOUND', 404);
+
+  const title = kitsuTitle(anime);
+  const anilistId = kitsuMappingId(anime, ['anilist/anime']);
+  const malId = kitsuMappingId(anime, ['myanimelist/anime']);
+  const tvdbId = kitsuMappingId(anime, ['thetvdb/series', 'thetvdb']);
+
+  // Prefer an existing canonical AniList/MAL row when Kitsu exposes a mapping.
+  const existing = anilistId
+    ? await getByAnilistId(env, anilistId)
+    : malId
+      ? await getByMalId(env, malId)
+      : null;
+
+  let tmdbId: number | null = existing?.tmdb_id ?? null;
+  if (!tmdbId && tvdbId) {
+    const matches = await withTimeout(findTmdbByExternalId(env, String(tvdbId), 'tvdb_id'));
+    const tvMatches = matches.filter((match) => match.media_type === 'tv');
+    if (tvMatches.length === 1) tmdbId = tvMatches[0].id;
+  }
+  if (!tmdbId) tmdbId = await findTmdbForKitsu(env, anime);
+
+  if (existing) {
+    const row = await resolveFromKitsu(env, id, title, {
+      anilistId,
+      malId,
+      tmdbId,
+      tvdbId,
+      summary: {
+        year: anime.attributes.startDate ? Number(anime.attributes.startDate.slice(0, 4)) : null,
+        rating: kitsuRating(anime),
+        posterPath: anime.attributes.posterImage?.large ?? anime.attributes.posterImage?.medium ?? null,
+      },
+    });
+    return {
+      spun_id: row.spun_id,
+      type: 'anime',
+      title,
+      year: anime.attributes.startDate ? Number(anime.attributes.startDate.slice(0, 4)) : null,
+      rating: kitsuRating(anime),
+      poster: anime.attributes.posterImage?.large ?? anime.attributes.posterImage?.medium ?? null,
+    };
+  }
+
+  const row = await resolveFromKitsu(env, id, title, {
+    anilistId,
+    malId,
+    tmdbId,
+    tvdbId,
+    summary: {
+      year: anime.attributes.startDate ? Number(anime.attributes.startDate.slice(0, 4)) : null,
+      rating: null,
+      posterPath: anime.attributes.posterImage?.large ?? anime.attributes.posterImage?.medium ?? null,
+    },
+  });
+
+  return {
+    spun_id: row.spun_id,
+    type: 'anime',
+    title,
+    year: anime.attributes.startDate ? Number(anime.attributes.startDate.slice(0, 4)) : null,
+    rating: null,
+    poster: anime.attributes.posterImage?.large ?? anime.attributes.posterImage?.medium ?? null,
+  };
+}
+
 async function resolveMal(env: Env, id: number): Promise<ContentItem> {
   const detail = await withTimeout(getJikanAnimeDetail(env, id));
   if (!detail) fail('RESOLVE_CONTENT_NOT_FOUND', 404);
@@ -289,10 +406,15 @@ async function resolveExisting(
     return storedSummaryItem(row) ?? resolveAnilist(env, Number(id));
   }
 
-  const row = await getByMalId(env, Number(id));
-      if (!row) return null;
-    return storedSummaryItem(row) ?? resolveMal(env, Number(id));
+  if (namespace === 'kitsu') {
+    const row = await getByKitsuId(env, Number(id));
+    if (!row) return null;
+    return storedSummaryItem(row) ?? resolveKitsu(env, Number(id));
+  }
 
+  const row = await getByMalId(env, Number(id));
+  if (!row) return null;
+  return storedSummaryItem(row) ?? resolveMal(env, Number(id));
 }
 
 export async function resolveIdentifier(
@@ -326,6 +448,7 @@ export async function resolveIdentifier(
     if (normalizedNamespace === 'imdb') return resolveTmdbExternal(env, 'imdb', id.trim());
     if (normalizedNamespace === 'tvdb') return resolveTmdbExternal(env, 'tvdb', id.trim());
     if (normalizedNamespace === 'anilist') return resolveAnilist(env, Number(id));
+    if (normalizedNamespace === 'kitsu') return resolveKitsu(env, Number(id));
     return resolveMal(env, Number(id));
   } catch (error) {
     if (error instanceof ResolveFailure) throw error;

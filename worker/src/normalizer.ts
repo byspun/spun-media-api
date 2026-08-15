@@ -22,6 +22,7 @@ import {
 } from './metadata/anilist.js';
 
 import { GENRES } from './config/genres.js';
+import { kitsuDescription, kitsuRating, kitsuTitle, type KitsuAnime } from './metadata/kitsu.js';
 import { getError } from './shared/errors.js';
 
 import type {
@@ -254,6 +255,45 @@ export function normalizeAnimeInfo(
     trailers,
     stills:   [],
     cast,
+    episodes: episodeCount !== null
+      ? { total: episodeCount, seasons: [{ season: 1, count: episodeCount }] }
+      : null,
+    part_of: [],
+  };
+}
+
+// ─── Kitsu → InfoResponse ─────────────────────────────────────────────────────
+
+export function normalizeKitsuInfo(
+  spunId: string,
+  anime: KitsuAnime,
+): InfoResponse {
+  const attrs = anime.attributes;
+  const year = attrs.startDate ? Number(attrs.startDate.slice(0, 4)) : null;
+  const status = attrs.status
+    ? attrs.status.toLowerCase().replace(/\b\w/g, (char) => char.toUpperCase())
+    : null;
+  const episodeCount = attrs.episodeCount ?? null;
+
+  return {
+    spun_id: spunId,
+    type: 'anime',
+    title: kitsuTitle(anime),
+    year: Number.isFinite(year) ? year : null,
+    rating: kitsuRating(anime),
+    overview: kitsuDescription(anime),
+    status,
+    tagline: null,
+    runtime: attrs.episodeLength ?? null,
+    genres: [],
+    format: attrs.subtype ?? null,
+    tags: null,
+    studios: [],
+    poster: attrs.posterImage?.large ?? attrs.posterImage?.medium ?? null,
+    backdrop: attrs.coverImage?.large ?? attrs.coverImage?.medium ?? null,
+    trailers: [],
+    stills: [],
+    cast: [],
     episodes: episodeCount !== null
       ? { total: episodeCount, seasons: [{ season: 1, count: episodeCount }] }
       : null,
