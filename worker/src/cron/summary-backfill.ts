@@ -22,8 +22,10 @@ export interface SummaryBackfillResult {
   processed: number;
   updated: number;
   failed: number;
+  quarantined: number;
   remaining: number;
   failed_spun_ids: string[];
+  quarantined_spun_ids: string[];
 }
 
 function tmdbSummary(detail: Awaited<ReturnType<typeof getTmdbMovieDetail>> | Awaited<ReturnType<typeof getTmdbTvDetail>>, type: 'movie' | 'tv'): SummaryValues | null {
@@ -83,14 +85,33 @@ export async function backfillTitleSummaries(env: Env, requestedLimit = 5): Prom
 
   let updated = 0;
   let failed = 0;
+  let quarantined = 0;
   const failedSpunIds: string[] = [];
+  const quarantinedSpunIds: string[] = [];
 
   for (const row of rows) {
     try {
       const summary = await lookupSummary(env, row);
       if (!summary) {
+        // No usable metadata is currently available. Mark the row as processed
+        // with its existing nullable summary fields intact so one unavailable
+        // title cannot block the entire staged backfill. A future backfill can
+        // explicitly reset summary_synced_at to retry quarantined rows.
+        const quarantinedRows = await sql`
+          UPDATE media_titles
+          SET summary_synced_at = NOW()
+          WHERE spun_id = ${row.spun_id}
+          RETURNING *
+        ` as MediaTitleRow[];
+        const quarantinedRow = quarantinedRows[0] ?? {
+          ...row,
+          summary_synced_at: new Date().toISOString(),
+        };
+        await kvSet(env, `row:${row.spun_id}`, quarantinedRow, TTL.idMap);
         failed++;
+        quarantined++;
         failedSpunIds.push(row.spun_id);
+        quarantinedSpunIds.push(row.spun_id);
         continue;
       }
 
@@ -130,7 +151,9 @@ export async function backfillTitleSummaries(env: Env, requestedLimit = 5): Prom
     processed: rows.length,
     updated,
     failed,
+    quarantined,
     remaining: remainingRows[0]?.count ?? 0,
     failed_spun_ids: failedSpunIds,
+    quarantined_spun_ids: quarantinedSpunIds,
   };
 }
