@@ -4,11 +4,13 @@
 // Public responses never expose adapter or infrastructure identities.
 
 import type { Env } from './types/env.js';
-import type { ContentItem, ContentType } from './types/index.js';
+import type { ContentItem, ContentType, MediaTitleRow } from './types/index.js';
 import {
   findTmdbByExternalId,
   getTmdbMovieDetail,
   getTmdbTvDetail,
+  tmdbPoster,
+  extractYear,
   type TmdbMovieDetail,
   type TmdbSearchResult,
   type TmdbTvDetail,
@@ -28,6 +30,18 @@ import {
 import { anilistToItem, tmdbResultToItem } from './normalizer.js';
 
 export type ResolveNamespace = 'tmdb' | 'imdb' | 'tvdb' | 'anilist' | 'mal';
+
+function storedSummaryItem(row: MediaTitleRow): ContentItem | null {
+  if (!row.summary_synced_at) return null;
+  return {
+    spun_id: row.spun_id,
+    type: row.content_type,
+    title: row.title,
+    year: row.year,
+    rating: row.rating,
+    poster: row.poster_path,
+  };
+}
 
 export interface ResolveNamespaceInfo {
   namespace: ResolveNamespace;
@@ -137,6 +151,11 @@ async function registerTmdb(
   const row = await resolveFromTmdb(env, detail.id, type, title, {
     imdbId: external?.imdb_id ?? null,
     tvdbId: type === 'tv' ? (external as TmdbTvDetail['external_ids'])?.tvdb_id ?? null : null,
+    summary: {
+      year: extractYear(type === 'movie' ? (detail as TmdbMovieDetail).release_date : (detail as TmdbTvDetail).first_air_date),
+      rating: typeof detail.vote_average === 'number' ? Number(detail.vote_average.toFixed(1)) : null,
+      posterPath: detail.poster_path ? tmdbPoster(detail.poster_path, 'w342') : null,
+    },
   });
   const result = type === 'movie'
     ? movieSearchResult(detail as TmdbMovieDetail)
@@ -200,6 +219,11 @@ async function resolveAnilist(env: Env, id: number): Promise<ContentItem> {
 
   const row = await resolveFromAnilist(env, media.id, title, {
     malId: media.idMal ?? null,
+    summary: {
+      year: media.startDate?.year ?? null,
+      rating: typeof media.averageScore === 'number' ? Number((media.averageScore / 10).toFixed(1)) : null,
+      posterPath: media.coverImage?.large ?? media.coverImage?.medium ?? null,
+    },
   });
   return anilistToItem(media, row.spun_id);
 }
@@ -210,8 +234,14 @@ async function resolveMal(env: Env, id: number): Promise<ContentItem> {
   const title = detail.title_english || detail.title;
   if (!title) fail('RESOLVE_UNSUPPORTED_RESULT', 422);
 
-  const row = await resolveFromMal(env, id, title);
   const year = detail.year ?? (detail.aired?.from ? Number(detail.aired.from.slice(0, 4)) : null);
+  const row = await resolveFromMal(env, id, title, {
+    summary: {
+      year: Number.isFinite(year) ? year : null,
+      rating: typeof detail.score === 'number' ? Number(detail.score.toFixed(1)) : null,
+      posterPath: detail.images?.jpg?.large_image_url ?? detail.images?.jpg?.image_url ?? null,
+    },
+  });
   return {
     spun_id: row.spun_id,
     type: 'anime',
@@ -234,7 +264,7 @@ async function resolveExisting(
       ? await getByTmdbId(env, numericId, requestedType)
       : (await getByTmdbId(env, numericId, 'movie')) ?? (await getByTmdbId(env, numericId, 'tv'));
     if (!row) return null;
-    return resolveTmdbId(env, numericId, row.content_type === 'anime' ? undefined : row.content_type);
+    return storedSummaryItem(row) ?? resolveTmdbId(env, numericId, row.content_type === 'anime' ? undefined : row.content_type);
   }
 
   if (namespace === 'imdb') {
@@ -250,18 +280,19 @@ async function resolveExisting(
   if (namespace === 'tvdb') {
     const row = await getByTvdbId(env, Number(id));
     if (!row) return null;
-    return resolveTmdbExternal(env, 'tvdb', id);
+    return storedSummaryItem(row) ?? resolveTmdbExternal(env, namespace, id);
   }
 
   if (namespace === 'anilist') {
     const row = await getByAnilistId(env, Number(id));
     if (!row) return null;
-    return resolveAnilist(env, Number(id));
+    return storedSummaryItem(row) ?? resolveAnilist(env, Number(id));
   }
 
   const row = await getByMalId(env, Number(id));
-  if (!row) return null;
-  return resolveMal(env, Number(id));
+      if (!row) return null;
+    return storedSummaryItem(row) ?? resolveMal(env, Number(id));
+
 }
 
 export async function resolveIdentifier(

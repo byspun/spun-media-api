@@ -12,6 +12,7 @@ import {
   buildAndCacheTvHome,
   buildAndCacheAnimeHome,
 } from './cron/home.js';
+import { backfillTitleSummaries } from './cron/summary-backfill.js';
 import { bumpCacheVersion } from './cache.js';
 
 import searchRoute    from './routes/search.js';
@@ -116,6 +117,19 @@ v1.get('/home/build', async (c) => {
     status_url: `/v1/home/status`,
     type
   });
+});
+
+// ─── Summary Backfill — Populate compact card metadata in bounded batches ──────
+
+v1.post('/home/backfill', async (c) => {
+  const secret = c.req.header('X-Spun-Secret');
+  if (!secret || secret !== c.env.X_SPUN_SECRET) {
+    return errorResponse('UNAUTHORIZED', 'Unauthorized', 401);
+  }
+
+  const requested = Number(c.req.query('limit') ?? '5');
+  const result = await backfillTitleSummaries(c.env, Number.isFinite(requested) ? requested : 5);
+  return c.json({ success: true, ...result });
 });
 
 // ─── Cache Clear — Force clears cache everywhere ──────────────────────────────

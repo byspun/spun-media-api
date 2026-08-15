@@ -321,6 +321,10 @@ export interface MediaTitleRow {
   mal_id:          number | null;
   imdb_id:         string | null;
   tvdb_id:         number | null;
+  year:            number | null;
+  rating:          number | null;
+  poster_path:     string | null;
+  summary_synced_at: string | null;
   daratech_id:     string | null;
   daratech_score:  number | null;
   created_at:      string;

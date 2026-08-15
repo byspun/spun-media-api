@@ -16,6 +16,40 @@ import { makeSpunId, makeSlug } from './slugger.js';
 import type { Env } from '../types/env.js';
 import type { ContentType, MediaTitleRow } from '../types/index.js';
 
+export interface TitleSummary {
+  year?: number | null;
+  rating?: number | null;
+  posterPath?: string | null;
+}
+
+async function persistSummaryIfMissing(
+  env: Env,
+  row: MediaTitleRow,
+  summary?: TitleSummary,
+): Promise<MediaTitleRow> {
+  if (!summary || row.summary_synced_at) return row;
+
+  const sql = getDb(env);
+  const updated = await sql`
+    UPDATE media_titles
+    SET year = ${summary.year ?? null},
+        rating = ${summary.rating ?? null},
+        poster_path = ${summary.posterPath ?? null},
+        summary_synced_at = NOW()
+    WHERE spun_id = ${row.spun_id}
+    RETURNING *
+  `;
+  const next = (updated[0] as MediaTitleRow | undefined) ?? {
+    ...row,
+    year: summary.year ?? null,
+    rating: summary.rating ?? null,
+    poster_path: summary.posterPath ?? null,
+    summary_synced_at: new Date().toISOString(),
+  };
+  await kvSet(env, `row:${row.spun_id}`, next, TTL.idMap);
+  return next;
+}
+
 // ─── Lookup by spun_id ────────────────────────────────────────────────────────
 
 export async function getBySpunId(
@@ -179,11 +213,12 @@ export async function resolveFromTmdb(
   params: {
     imdbId?: string | null;
     tvdbId?: number | null;
+    summary?: TitleSummary;
   } = {}
 ): Promise<MediaTitleRow> {
   // Check existing
   const existing = await getByTmdbId(env, tmdbId, type);
-  if (existing) return existing;
+  if (existing) return persistSummaryIfMissing(env, existing, params.summary);
 
   // Generate new spun_id
   const spunId = await makeSpunId(title, type, tmdbId);
@@ -193,13 +228,17 @@ export async function resolveFromTmdb(
   const rows = await sql`
     INSERT INTO media_titles (
       spun_id, slug, content_type, title,
-      tmdb_id, imdb_id, tvdb_id
+      tmdb_id, imdb_id, tvdb_id, year, rating, poster_path, summary_synced_at
     )
     VALUES (
       ${spunId}, ${slug}, ${type}, ${title},
       ${tmdbId},
       ${params.imdbId ?? null},
-      ${params.tvdbId ?? null}
+      ${params.tvdbId ?? null},
+      ${params.summary?.year ?? null},
+      ${params.summary?.rating ?? null},
+      ${params.summary?.posterPath ?? null},
+      NOW()
     )
     ON CONFLICT (spun_id) DO UPDATE
       SET last_accessed_at = NOW()
@@ -226,11 +265,12 @@ export async function resolveFromAnilist(
   params: {
     tmdbId?: number | null;
     malId?:  number | null;
+    summary?: TitleSummary;
   } = {}
 ): Promise<MediaTitleRow> {
   // Check existing
   const existing = await getByAnilistId(env, anilistId);
-  if (existing) return existing;
+  if (existing) return persistSummaryIfMissing(env, existing, params.summary);
 
   // Generate new spun_id
   const spunId = await makeSpunId(title, 'anime', anilistId);
@@ -240,13 +280,17 @@ export async function resolveFromAnilist(
   const rows = await sql`
     INSERT INTO media_titles (
       spun_id, slug, content_type, title,
-      anilist_id, tmdb_id, mal_id
+      anilist_id, tmdb_id, mal_id, year, rating, poster_path, summary_synced_at
     )
     VALUES (
       ${spunId}, ${slug}, 'anime', ${title},
       ${anilistId},
       ${params.tmdbId ?? null},
-      ${params.malId  ?? null}
+      ${params.malId  ?? null},
+      ${params.summary?.year ?? null},
+      ${params.summary?.rating ?? null},
+      ${params.summary?.posterPath ?? null},
+      NOW()
     )
     ON CONFLICT (spun_id) DO UPDATE
       SET last_accessed_at = NOW()
@@ -272,10 +316,11 @@ export async function resolveFromMal(
   params: {
     anilistId?: number | null;
     tmdbId?: number | null;
+    summary?: TitleSummary;
   } = {},
 ): Promise<MediaTitleRow> {
   const existing = await getByMalId(env, malId);
-  if (existing) return existing;
+  if (existing) return persistSummaryIfMissing(env, existing, params.summary);
 
   const spunId = await makeSpunId(title, 'anime', malId);
   const slug = makeSlug(title);
@@ -283,13 +328,17 @@ export async function resolveFromMal(
   const rows = await sql`
     INSERT INTO media_titles (
       spun_id, slug, content_type, title,
-      anilist_id, tmdb_id, mal_id
+      anilist_id, tmdb_id, mal_id, year, rating, poster_path, summary_synced_at
     )
     VALUES (
       ${spunId}, ${slug}, 'anime', ${title},
       ${params.anilistId ?? null},
       ${params.tmdbId ?? null},
-      ${malId}
+      ${malId},
+      ${params.summary?.year ?? null},
+      ${params.summary?.rating ?? null},
+      ${params.summary?.posterPath ?? null},
+      NOW()
     )
     ON CONFLICT (spun_id) DO UPDATE
       SET last_accessed_at = NOW()
@@ -362,7 +411,7 @@ export async function getBySlugs(
 
 export async function batchResolveFromTmdb(
   env:   Env,
-  items: Array<{ id: number; title: string }>,
+  items: Array<{ id: number; title: string; summary?: TitleSummary }>,
   type:  'movie' | 'tv'
 ): Promise<MediaTitleRow[]> {
   if (!items.length) return [];
@@ -393,8 +442,9 @@ export async function batchResolveFromTmdb(
     }))
   );
   const newQueries = preparedItems.map(({ item, spunId, slug }) => sql`
-    INSERT INTO media_titles (spun_id, slug, content_type, title, tmdb_id)
-    VALUES (${spunId}, ${slug}, ${type}, ${item.title}, ${item.id})
+            INSERT INTO media_titles (spun_id, slug, content_type, title, tmdb_id, year, rating, poster_path, summary_synced_at)
+        VALUES (${spunId}, ${slug}, ${type}, ${item.title}, ${item.id}, ${item.summary?.year ?? null}, ${item.summary?.rating ?? null}, ${item.summary?.posterPath ?? null}, NOW())
+
     ON CONFLICT (spun_id) DO UPDATE SET last_accessed_at = NOW()
     RETURNING *
   `);
@@ -410,7 +460,7 @@ export async function batchResolveFromTmdb(
 
 export async function batchResolveFromAnilist(
   env:   Env,
-  items: Array<{ id: number; title: string; malId?: number }>
+  items: Array<{ id: number; title: string; malId?: number; summary?: TitleSummary }>
 ): Promise<MediaTitleRow[]> {
   if (!items.length) return [];
 
@@ -437,8 +487,9 @@ export async function batchResolveFromAnilist(
     }))
   );
   const newQueries = preparedItems.map(({ item, spunId, slug }) => sql`
-    INSERT INTO media_titles (spun_id, slug, content_type, title, anilist_id, mal_id)
-    VALUES (${spunId}, ${slug}, 'anime', ${item.title}, ${item.id}, ${item.malId ?? null})
+            INSERT INTO media_titles (spun_id, slug, content_type, title, anilist_id, mal_id, year, rating, poster_path, summary_synced_at)
+        VALUES (${spunId}, ${slug}, 'anime', ${item.title}, ${item.id}, ${item.malId ?? null}, ${item.summary?.year ?? null}, ${item.summary?.rating ?? null}, ${item.summary?.posterPath ?? null}, NOW())
+
     ON CONFLICT (spun_id) DO UPDATE SET last_accessed_at = NOW()
     RETURNING *
   `);

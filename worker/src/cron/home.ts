@@ -66,6 +66,11 @@ async function tmdbToItems(
   const resolveItems = slice.map((r) => ({
     id:    r.id,
     title: r.title || r.name || '',
+    summary: {
+      year: extractYear(r.release_date || r.first_air_date),
+      rating: typeof r.vote_average === 'number' ? Number(r.vote_average.toFixed(1)) : null,
+      posterPath: tmdbPoster(r.poster_path ?? null),
+    },
   }));
 
   const rows = await batchResolveFromTmdb(env, resolveItems, type);
@@ -89,6 +94,11 @@ async function anilistToItems(
     id:    m.id,
     title: anilistTitle(m),
     malId: m.idMal ?? undefined,
+    summary: {
+      year: m.startDate?.year ?? null,
+      rating: typeof m.averageScore === 'number' ? Number((m.averageScore / 10).toFixed(1)) : null,
+      posterPath: m.coverImage?.large ?? m.coverImage?.medium ?? null,
+    },
   }));
 
   const rows = await batchResolveFromAnilist(env, resolveItems);
@@ -99,9 +109,20 @@ async function anilistToItems(
   });
 }
 
-type HomeIdentityRow = Pick<MediaTitleRow, 'spun_id' | 'title' | 'content_type' | 'tmdb_id' | 'anilist_id' | 'mal_id'>;
+type HomeIdentityRow = Pick<MediaTitleRow, 'spun_id' | 'title' | 'content_type' | 'tmdb_id' | 'anilist_id' | 'mal_id' | 'year' | 'rating' | 'poster_path' | 'summary_synced_at'>;
 
 async function hydrateHomeItem(env: Env, row: HomeIdentityRow): Promise<ContentItem> {
+  if (row.summary_synced_at) {
+    return {
+      spun_id: row.spun_id,
+      type: row.content_type,
+      title: row.title,
+      year: row.year,
+      rating: row.rating,
+      poster: row.poster_path,
+    };
+  }
+
   const fallback: ContentItem = {
     spun_id: row.spun_id,
     type: row.content_type,
@@ -580,7 +601,7 @@ export async function buildGeneralHome(env: Env) {
 
   const db = getDb(env);
   const justAddedRaw = await db`
-    SELECT spun_id, title, content_type, tmdb_id, anilist_id, mal_id
+    SELECT spun_id, title, content_type, tmdb_id, anilist_id, mal_id, year, rating, poster_path, summary_synced_at
     FROM media_titles
     ORDER BY created_at DESC
     LIMIT 20
