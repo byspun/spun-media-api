@@ -1,173 +1,96 @@
-// worker/src/proxy.ts
-// HLS stream proxy — ported from StreamRelay.
-// Rewrites M3U8 manifests so all segment/key URLs route back through this proxy.
-// Handles: master playlists, media playlists, TS segments, encryption keys.
-//
-// Usage: GET /proxy?url=<encoded-stream-url>
-//   - M3U8 files: rewrite all relative + absolute URLs through proxy
-//   - Everything else: stream through with correct headers (Range support)
-
-// ─── Determine if a URL is an M3U8 manifest ──────────────────────────────────
+import type { Env } from './types/env.js';
+import { createStreamProxyToken, readStreamProxyToken } from './proxy-token.js';
 
 function isM3u8(url: string, contentType: string): boolean {
   const lower = url.toLowerCase().split('?')[0];
-  return (
-    lower.endsWith('.m3u8') ||
-    contentType.includes('mpegurl') ||
-    contentType.includes('x-mpegurl')
-  );
+  return lower.endsWith('.m3u8') || contentType.includes('mpegurl') || contentType.includes('x-mpegurl');
 }
-
-// ─── Resolve a relative URL against a base URL ───────────────────────────────
 
 function resolveUrl(base: string, relative: string): string {
-  if (relative.startsWith('http://') || relative.startsWith('https://')) {
-    return relative;
-  }
-  try {
-    return new URL(relative, base).toString();
-  } catch {
-    return relative;
-  }
+  if (relative.startsWith('http://') || relative.startsWith('https://')) return relative;
+  try { return new URL(relative, base).toString(); } catch { return relative; }
 }
 
-// ─── Build a proxied URL ──────────────────────────────────────────────────────
-
-function proxyUrl(requestUrl: URL, targetUrl: string): string {
-  const base = `${requestUrl.origin}${requestUrl.pathname}`;
-  return `${base}?url=${encodeURIComponent(targetUrl)}`;
+async function proxyUrl(requestUrl: URL, targetUrl: string, secret: string, headers: Record<string, string>): Promise<string> {
+  const { token } = await createStreamProxyToken(secret, targetUrl, headers);
+  return `${requestUrl.origin}${requestUrl.pathname}?t=${encodeURIComponent(token)}`;
 }
 
-// ─── Rewrite M3U8 manifest ────────────────────────────────────────────────────
-// Walks every line and rewrites:
-//   - Media segment URIs (non-comment, non-tag lines)
-//   - URI="..." inside EXT-X-KEY, EXT-X-MAP, EXT-X-MEDIA tags
-//   - Variant stream URIs in master playlists
-
-function rewriteM3u8(body: string, baseUrl: string, requestUrl: URL): string {
-  const lines  = body.split('\n');
+async function rewriteM3u8(body: string, baseUrl: string, requestUrl: URL, secret: string, headers: Record<string, string>): Promise<string> {
+  const lines = body.split('\n');
   const output: string[] = [];
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-
-    // Empty line
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
     if (!line) { output.push(''); continue; }
-
-    // Tag lines with URI attribute — rewrite URI="..."
     if (line.startsWith('#') && line.includes('URI="')) {
-      const rewritten = line.replace(/URI="([^"]+)"/g, (_match, uri) => {
-        const absolute = resolveUrl(baseUrl, uri);
-        return `URI="${proxyUrl(requestUrl, absolute)}"`;
-      });
+      let rewritten = line;
+      const matches = [...line.matchAll(/URI="([^"]+)"/g)];
+      for (const match of matches) {
+        const absolute = resolveUrl(baseUrl, match[1]);
+        const proxied = await proxyUrl(requestUrl, absolute, secret, headers);
+        rewritten = rewritten.replace(`URI="${match[1]}"`, `URI="${proxied}"`);
+      }
       output.push(rewritten);
       continue;
     }
-
-    // Pure tag line (no URI) — pass through
-    if (line.startsWith('#')) {
-      output.push(line);
-      continue;
-    }
-
-    // Segment / variant URI line — resolve and proxy
-    const absolute = resolveUrl(baseUrl, line);
-    output.push(proxyUrl(requestUrl, absolute));
+    if (line.startsWith('#')) { output.push(line); continue; }
+    output.push(await proxyUrl(requestUrl, resolveUrl(baseUrl, line), secret, headers));
   }
-
   return output.join('\n');
 }
 
-// ─── Main proxy handler ───────────────────────────────────────────────────────
+function safeHeaders(input: Record<string, string>): Record<string, string> {
+  const allowed = new Set(['authorization', 'cookie', 'referer', 'origin', 'user-agent', 'x-requested-with', 'accept']);
+  return Object.fromEntries(Object.entries(input).filter(([key, value]) => allowed.has(key.toLowerCase()) && value.length < 2000));
+}
 
-export async function proxyHls(request: Request, _env: unknown): Promise<Response> {
-  const reqUrl    = new URL(request.url);
-  const targetRaw = reqUrl.searchParams.get('url');
+export async function proxyHls(request: Request, env: Env): Promise<Response> {
+  const requestUrl = new URL(request.url);
+  const token = requestUrl.searchParams.get('t');
+  if (!token) return new Response(JSON.stringify({ code: 'BAD_REQUEST', error: 'Stream reference required', description: 'No stream capability was provided.', action: 'Use the stream URL returned by Spün.' }), { status: 400, headers: { 'Content-Type': 'application/json' } });
 
-  if (!targetRaw) {
-    return new Response(
-      JSON.stringify({ error: { code: 'MISSING_URL', message: 'Missing url param.' } }),
-      { status: 400, headers: { 'Content-Type': 'application/json' } }
-    );
-  }
+  const payload = await readStreamProxyToken(env.STREAM_PROXY_TOKEN_SECRET || env.SUBTITLE_PROXY_TOKEN_SECRET, token);
+  if (!payload) return new Response(JSON.stringify({ code: 'PROXY_TOKEN_INVALID', error: 'Invalid stream reference', description: 'The stream capability is invalid or expired.', action: 'Request a fresh stream URL.' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
 
-  let targetUrl: string;
-  try {
-    targetUrl = decodeURIComponent(targetRaw);
-    new URL(targetUrl); // validate
-  } catch {
-    return new Response(
-      JSON.stringify({ error: { code: 'INVALID_URL', message: 'Invalid stream URL.' } }),
-      { status: 400, headers: { 'Content-Type': 'application/json' } }
-    );
-  }
+  let target: URL;
+  try { target = new URL(payload.upstream_url); } catch { return new Response(JSON.stringify({ code: 'PROXY_FORMAT_UNSUPPORTED', error: 'Invalid stream source', description: 'The stream source could not be validated.', action: 'Request another stream source.' }), { status: 422, headers: { 'Content-Type': 'application/json' } }); }
 
-  const targetOrigin = new URL(targetUrl).origin;
-
-  // ── Build upstream request headers ──────────────────────────────────────────
   const upstreamHeaders = new Headers({
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    'Referer':    targetOrigin + '/',
-    'Origin':     targetOrigin,
-    'Accept':     '*/*',
+    Referer: `${target.origin}/`,
+    Origin: target.origin,
+    Accept: '*/*',
+    ...safeHeaders(payload.headers),
   });
-
-  // Forward Range header for seeking
   const rangeHeader = request.headers.get('Range');
   if (rangeHeader) upstreamHeaders.set('Range', rangeHeader);
 
-  // ── Fetch from upstream ──────────────────────────────────────────────────────
-  let upstreamRes: Response;
+  let upstream: Response;
   try {
-    upstreamRes = await fetch(targetUrl, {
-      headers: upstreamHeaders,
-      redirect: 'follow',
-    });
+    upstream = await fetch(target, { headers: upstreamHeaders, redirect: 'follow' });
   } catch {
-    return new Response(
-      JSON.stringify({ error: { code: 'FETCH_ERROR', message: 'Failed to fetch stream.' } }),
-      { status: 502, headers: { 'Content-Type': 'application/json' } }
-    );
+    return new Response(JSON.stringify({ code: 'PROXY_UPSTREAM_UNAVAILABLE', error: 'Stream source unavailable', description: 'The stream source could not be reached.', action: 'Try again later or select another stream.' }), { status: 502, headers: { 'Content-Type': 'application/json' } });
   }
+  if (!upstream.ok && upstream.status !== 206) return new Response(null, { status: upstream.status });
 
-  if (!upstreamRes.ok && upstreamRes.status !== 206) {
-    return new Response(null, { status: upstreamRes.status });
-  }
-
-  const contentType = upstreamRes.headers.get('Content-Type') ?? '';
-
-  // ── CORS + passthrough headers ───────────────────────────────────────────────
+  const contentType = upstream.headers.get('Content-Type') ?? '';
   const responseHeaders = new Headers({
-    'Access-Control-Allow-Origin':  '*',
+    'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Range, Content-Type',
     'Access-Control-Expose-Headers': 'Content-Length, Content-Range',
   });
-
-  // Forward relevant upstream headers
-  for (const h of ['Content-Type', 'Content-Length', 'Content-Range', 'Accept-Ranges']) {
-    const val = upstreamRes.headers.get(h);
-    if (val) responseHeaders.set(h, val);
+  for (const header of ['Content-Type', 'Content-Length', 'Content-Range', 'Accept-Ranges']) {
+    const value = upstream.headers.get(header);
+    if (value) responseHeaders.set(header, value);
   }
 
-  // ── M3U8: rewrite and return ─────────────────────────────────────────────────
-  if (isM3u8(targetUrl, contentType)) {
-    const body      = await upstreamRes.text();
-    const rewritten = rewriteM3u8(body, targetUrl, reqUrl);
-
-    responseHeaders.set('Content-Type',  'application/vnd.apple.mpegurl');
+  if (isM3u8(target.toString(), contentType)) {
+    const rewritten = await rewriteM3u8(await upstream.text(), target.toString(), requestUrl, env.STREAM_PROXY_TOKEN_SECRET || env.SUBTITLE_PROXY_TOKEN_SECRET, safeHeaders(payload.headers));
+    responseHeaders.set('Content-Type', 'application/vnd.apple.mpegurl');
     responseHeaders.set('Cache-Control', 'no-cache, no-store');
-
-    return new Response(rewritten, {
-      status:  200,
-      headers: responseHeaders,
-    });
+    return new Response(rewritten, { status: 200, headers: responseHeaders });
   }
 
-  // ── Everything else: stream through ──────────────────────────────────────────
   responseHeaders.set('Cache-Control', 'public, max-age=3600');
-
-  return new Response(upstreamRes.body, {
-    status:  upstreamRes.status,
-    headers: responseHeaders,
-  });
+  return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
 }

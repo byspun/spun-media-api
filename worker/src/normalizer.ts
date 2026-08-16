@@ -23,6 +23,7 @@ import {
 
 import { GENRES } from './config/genres.js';
 import { kitsuDescription, kitsuRating, kitsuTitle, type KitsuAnime } from './metadata/kitsu.js';
+import type { MovieBoxInfo } from './metadata/moviebox.js';
 import { getError } from './shared/errors.js';
 
 import type {
@@ -297,6 +298,37 @@ export function normalizeKitsuInfo(
     episodes: episodeCount !== null
       ? { total: episodeCount, seasons: [{ season: 1, count: episodeCount }] }
       : null,
+    part_of: [],
+  };
+}
+
+// ─── MovieBox-only → InfoResponse ─────────────────────────────────────────────
+export function normalizeMovieboxInfo(
+  spunId: string,
+  item: MovieBoxInfo,
+  type: 'movie' | 'tv' | 'anime',
+): InfoResponse {
+  const year = item.releaseDate ? Number(String(item.releaseDate).slice(0, 4)) : null;
+  return {
+    spun_id: spunId,
+    type,
+    title: item.title,
+    year: Number.isFinite(year) ? year : null,
+    rating: typeof item.rating === 'number' ? Number(item.rating.toFixed(1)) : null,
+    overview: item.description ?? null,
+    status: null,
+    tagline: null,
+    runtime: item.runtime ?? null,
+    genres: item.genre ? item.genre.split(',').map((value) => value.trim()).filter(Boolean) : [],
+    format: item.language ?? null,
+    tags: null,
+    studios: [],
+    poster: item.poster ?? null,
+    backdrop: null,
+    trailers: [],
+    stills: [],
+    cast: [],
+    episodes: null,
     part_of: [],
   };
 }

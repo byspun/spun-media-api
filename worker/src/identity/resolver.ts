@@ -161,6 +161,46 @@ export async function getByKitsuId(
   return row;
 }
 
+export async function getByMovieboxId(
+  env: Env,
+  movieboxId: number,
+  type?: 'movie' | 'tv' | 'anime',
+): Promise<MediaTitleRow | null> {
+  const cacheKey = `row:moviebox:${movieboxId}`;
+  const cached = await kvGet<MediaTitleRow>(env, cacheKey);
+  if (cached && (!type || cached.content_type === type)) return cached;
+
+  const sql = getDb(env);
+  const rows = await sql`
+    SELECT * FROM media_titles
+    WHERE moviebox_id = ${movieboxId}
+      ${type ? sql`AND content_type = ${type}` : sql``}
+    LIMIT 1
+  `;
+  if (!rows.length) return null;
+
+  const row = rows[0] as MediaTitleRow;
+  await kvSet(env, cacheKey, row, TTL.idMap);
+  return row;
+}
+
+export async function linkMovieboxId(
+  env: Env,
+  spunId: string,
+  movieboxId: number,
+): Promise<void> {
+  const sql = getDb(env);
+  await sql`
+    UPDATE media_titles
+    SET moviebox_id = ${movieboxId}
+    WHERE spun_id = ${spunId} AND moviebox_id IS NULL
+  `;
+  await Promise.all([
+    kvDel(env, `row:${spunId}`),
+    kvDel(env, `row:moviebox:${movieboxId}`),
+  ]);
+}
+
 export async function getByAnilistId(
   env:       Env,
   anilistId: number
@@ -221,6 +261,71 @@ export async function getByImdbId(
 
   const row = rows[0] as MediaTitleRow;
   await kvSet(env, cacheKey, row, TTL.idMap);
+  return row;
+}
+
+// ─── Register or retrieve — MovieBox content ───────────────────────────────────
+
+export async function resolveFromMoviebox(
+  env: Env,
+  movieboxId: number,
+  type: 'movie' | 'tv' | 'anime',
+  title: string,
+  params: { year?: number | null; rating?: number | null; posterPath?: string | null } = {},
+): Promise<MediaTitleRow> {
+  const existing = await getByMovieboxId(env, movieboxId, type);
+  if (existing) return persistSummaryIfMissing(env, existing, {
+    year: params.year,
+    rating: params.rating,
+    posterPath: params.posterPath,
+  });
+
+  const sql = getDb(env);
+  const candidates = await sql`
+    SELECT * FROM media_titles
+    WHERE content_type = ${type}
+      AND LOWER(title) = LOWER(${title})
+      AND (${params.year ?? null}::int IS NULL OR year IS NULL OR ABS(year - ${params.year ?? null}) <= 1)
+    LIMIT 2
+  ` as MediaTitleRow[];
+  if (candidates.length === 1) {
+    const updated = await sql`
+      UPDATE media_titles
+      SET moviebox_id = ${movieboxId},
+          year = COALESCE(year, ${params.year ?? null}),
+          rating = COALESCE(rating, ${params.rating ?? null}),
+          poster_path = COALESCE(poster_path, ${params.posterPath ?? null})
+      WHERE spun_id = ${candidates[0].spun_id} AND moviebox_id IS NULL
+      RETURNING *
+    `;
+    const row = (updated[0] as MediaTitleRow | undefined) ?? candidates[0];
+    await Promise.all([
+      kvSet(env, `row:${row.spun_id}`, row, TTL.idMap),
+      kvSet(env, `row:moviebox:${movieboxId}`, row, TTL.idMap),
+    ]);
+    return row;
+  }
+
+  const spunId = await makeSpunId(title, type, movieboxId);
+  const slug = makeSlug(title);
+  const rows = await sql`
+    INSERT INTO media_titles (
+      spun_id, slug, content_type, title, moviebox_id,
+      year, rating, poster_path, summary_synced_at
+    ) VALUES (
+      ${spunId}, ${slug}, ${type}, ${title}, ${movieboxId},
+      ${params.year ?? null}, ${params.rating ?? null}, ${params.posterPath ?? null}, NOW()
+    )
+    ON CONFLICT (spun_id) DO UPDATE
+      SET moviebox_id = COALESCE(media_titles.moviebox_id, EXCLUDED.moviebox_id),
+          last_accessed_at = NOW()
+    RETURNING *
+  `;
+  const row = rows[0] as MediaTitleRow;
+  await Promise.all([
+    kvSet(env, `row:${row.spun_id}`, row, TTL.idMap),
+    kvSet(env, `row:moviebox:${movieboxId}`, row, TTL.idMap),
+  ]);
   return row;
 }
 

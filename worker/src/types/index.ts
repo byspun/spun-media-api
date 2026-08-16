@@ -305,6 +305,7 @@ export interface HealthResponse {
     tmdb:      'ok' | 'down';
     anilist:   'ok' | 'down';
     jikan:     'ok' | 'down';
+    kitsu:     'ok' | 'down';
     providers: 'ok' | 'degraded' | 'down';
   };
 }
@@ -322,6 +323,7 @@ export interface MediaTitleRow {
   imdb_id:         string | null;
   tvdb_id:         number | null;
   kitsu_id:        number | null;
+  moviebox_id:     number | null;
   year:            number | null;
   rating:          number | null;
   poster_path:     string | null;

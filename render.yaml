@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: spun-media-providers
+    runtime: node
+    rootDir: providers
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: false
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MOVIEBOX_API_BASE
+        value: https://moviebox.byspun.xyz
+      - key: PORT
+        value: 10000
+      - key: X_SPUN_SECRET
+        sync: false
+      - key: MOVIEBOX_API_SECRET
+        sync: false
+      - key: TMDB_API_KEY
+        sync: false

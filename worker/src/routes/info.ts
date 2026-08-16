@@ -34,6 +34,7 @@ import {
   normalizeTvInfo,
   normalizeAnimeInfo,
   normalizeKitsuInfo,
+  normalizeMovieboxInfo,
   normalizeTvEpisodes,
   anilistToItem,
   jsonResponse,
@@ -44,6 +45,7 @@ import {
   linkMalId,
 } from '../identity/resolver.js';
 import { getMembershipSummaries, getRelationshipGroups } from '../relationships.js';
+import { getMovieboxInfo } from '../metadata/moviebox.js';
 
 const info = new Hono<{ Bindings: Env }>();
 
@@ -157,6 +159,16 @@ info.get('/:spunId', async (c) => {
     await kvSet(c.env, cacheKey, payload, TTL.metadata);
     return jsonResponse(payload);
 
+  } else if (row.moviebox_id != null) {
+    const moviebox = await getMovieboxInfo(c.env, row);
+    if (!moviebox) return errorResponse('UPSTREAM_ERROR', 'Could not fetch metadata.', 502);
+    const movieboxInfo = normalizeMovieboxInfo(spunId, moviebox, row.content_type);
+    try {
+      movieboxInfo.part_of = await getMembershipSummaries(c.env, row);
+    } catch (err) {
+      console.error('[Info] MovieBox relationship context failed:', err);
+    }
+    payload = movieboxInfo;
   } else {
     return errorResponse('MISSING_EXTERNAL_ID', 'Title has no external ID mapped.', 500);
   }

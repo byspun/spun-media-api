@@ -26,6 +26,9 @@ export interface Env {
   // Set with: wrangler secret put SUBTITLE_PROXY_TOKEN_SECRET
   SUBTITLE_PROXY_TOKEN_SECRET: string;
 
+  // Encrypts opaque, expiring HLS stream proxy references.
+  STREAM_PROXY_TOKEN_SECRET: string;
+
   // TasteDive similar content API
   TASTEDIVE_API_KEY: string;
 

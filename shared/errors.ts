@@ -8,6 +8,12 @@
 
 export type SpunErrorCode = 
   | 'INVALID_ID'
+  | 'NOT_FOUND'
+  | 'INVALID_TYPE'
+  | 'INVALID_GENRE'
+  | 'INVALID_STUDIO'
+  | 'MISSING_EXTERNAL_ID'
+  | 'UPSTREAM_ERROR'
   | 'ROUTE_NOT_FOUND'
   | 'MISSING_QUERY'
   | 'BAD_REQUEST'
@@ -15,6 +21,22 @@ export type SpunErrorCode =
   | 'FORBIDDEN'
   | 'SERVICE_OFFLINE'
   | 'CONTENT_UNAVAILABLE'
+  | 'STREAMS_UNAVAILABLE'
+  | 'DOWNLOADS_UNAVAILABLE'
+  | 'EPISODE_UNAVAILABLE'
+  | 'QUALITY_UNAVAILABLE'
+  | 'AUDIO_UNAVAILABLE'
+  | 'SOURCE_RESPONSE_INVALID'
+  | 'SOURCE_TIMEOUT'
+  | 'SOURCE_ACCESS_DENIED'
+  | 'PROXY_TOKEN_INVALID'
+  | 'PROXY_TOKEN_EXPIRED'
+  | 'PROXY_UPSTREAM_UNAVAILABLE'
+  | 'PROXY_FORMAT_UNSUPPORTED'
+  | 'DOWNLOAD_LINK_INVALID'
+  | 'MAPPING_NOT_FOUND'
+  | 'MAPPING_AMBIGUOUS'
+  | 'MAPPING_TYPE_MISMATCH'
   | 'REGION_RESTRICTED'
   | 'SECURE_LINK_ERROR'
   | 'GATEWAY_TIMEOUT'
@@ -51,6 +73,36 @@ export const ERROR_REGISTRY: Record<SpunErrorCode, Omit<SpunErrorDetail, 'code'>
     description: 'The requested ID does not exist in the Spün library.',
     action:      'Verify the ID from a search result or try searching for the title again.'
   },
+  NOT_FOUND: {
+    error:       'Resource not found',
+    description: 'The requested resource does not exist in the Spün Media API.',
+    action:      'Check the identifier or endpoint path and try again.'
+  },
+  INVALID_TYPE: {
+    error:       'Invalid content type',
+    description: 'The requested operation does not support the supplied content type.',
+    action:      'Use one of the content types documented for this endpoint.'
+  },
+  INVALID_GENRE: {
+    error:       'Invalid genre',
+    description: 'The supplied genre is not available in the Spün catalogue for this operation.',
+    action:      'Use a genre returned by the catalogue or API documentation.'
+  },
+  INVALID_STUDIO: {
+    error:       'Invalid studio',
+    description: 'The supplied studio or network is not available in the Spün catalogue.',
+    action:      'Use a studio returned by the catalogue or API documentation.'
+  },
+  MISSING_EXTERNAL_ID: {
+    error:       'External identifier unavailable',
+    description: 'This catalogue entry does not have the external identifier required for the requested operation.',
+    action:      'Resolve or search for the title again before retrying.'
+  },
+  UPSTREAM_ERROR: {
+    error:       'Upstream request failed',
+    description: 'A required content or metadata request could not be completed.',
+    action:      'Please try again later.'
+  },
   ROUTE_NOT_FOUND: {
     error:       'Endpoint not found',
     description: 'The requested API endpoint does not exist.',
@@ -85,6 +137,86 @@ export const ERROR_REGISTRY: Record<SpunErrorCode, Omit<SpunErrorDetail, 'code'>
     error:       'No playable sources found',
     description: 'We searched all available infrastructure, but no active links were found for this title.',
     action:      'This content is currently offline. Our automated systems have been notified to find new sources.'
+  },
+  STREAMS_UNAVAILABLE: {
+    error:       'No playable streams found',
+    description: 'We searched the available streaming infrastructure, but no usable stream was found for this title.',
+    action:      'Try again later or select another title.'
+  },
+  DOWNLOADS_UNAVAILABLE: {
+    error:       'No downloads found',
+    description: 'No usable download resource was found for this title or requested episode.',
+    action:      'Try another quality, episode, or title.'
+  },
+  EPISODE_UNAVAILABLE: {
+    error:       'Episode unavailable',
+    description: 'The requested season and episode do not currently have a usable source.',
+    action:      'Check the season and episode values or try again later.'
+  },
+  QUALITY_UNAVAILABLE: {
+    error:       'Quality unavailable',
+    description: 'The requested quality is not available for this title.',
+    action:      'Choose another available quality.'
+  },
+  AUDIO_UNAVAILABLE: {
+    error:       'Audio option unavailable',
+    description: 'The requested audio or language variant is not available for this title.',
+    action:      'Choose another audio option.'
+  },
+  SOURCE_RESPONSE_INVALID: {
+    error:       'Source response invalid',
+    description: 'The content source responded, but its result could not be prepared for playback.',
+    action:      'Try again later or select another title.'
+  },
+  SOURCE_TIMEOUT: {
+    error:       'Source request timed out',
+    description: 'A content source took too long to respond.',
+    action:      'Please try again in a moment.'
+  },
+  SOURCE_ACCESS_DENIED: {
+    error:       'Source access unavailable',
+    description: 'A content source rejected the request needed to prepare this result.',
+    action:      'Try again later or select another title.'
+  },
+  PROXY_TOKEN_INVALID: {
+    error:       'Invalid media reference',
+    description: 'The media capability reference is invalid or was issued for another media type.',
+    action:      'Request a fresh media URL from Spün.'
+  },
+  PROXY_TOKEN_EXPIRED: {
+    error:       'Media reference expired',
+    description: 'The media capability reference has expired.',
+    action:      'Request a fresh media URL from Spün.'
+  },
+  PROXY_UPSTREAM_UNAVAILABLE: {
+    error:       'Media source unavailable',
+    description: 'The approved media source could not be reached.',
+    action:      'Try again later or choose another source.'
+  },
+  PROXY_FORMAT_UNSUPPORTED: {
+    error:       'Media format unsupported',
+    description: 'The requested proxy cannot handle this media format.',
+    action:      'Use the media URL returned for the supported format.'
+  },
+  DOWNLOAD_LINK_INVALID: {
+    error:       'Download link unavailable',
+    description: 'The returned download resource did not pass validation.',
+    action:      'Try another quality or request the downloads again.'
+  },
+  MAPPING_NOT_FOUND: {
+    error:       'Content mapping unavailable',
+    description: 'No compatible content mapping was found for this title.',
+    action:      'Try again later or select another title.'
+  },
+  MAPPING_AMBIGUOUS: {
+    error:       'Content mapping ambiguous',
+    description: 'More than one content mapping matched and the request could not be completed safely.',
+    action:      'Use a more specific title or identifier.'
+  },
+  MAPPING_TYPE_MISMATCH: {
+    error:       'Content type mismatch',
+    description: 'The mapped source does not match the requested movie, TV, or anime type.',
+    action:      'Verify the content type and try again.'
   },
   REGION_RESTRICTED: {
     error:       'Content restricted',

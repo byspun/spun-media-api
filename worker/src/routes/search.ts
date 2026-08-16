@@ -10,14 +10,73 @@
 
 import { Hono } from 'hono';
 import type { Env } from '../types/env.js';
-import type { ContentItem, ContentType } from '../types/index.js';
+import type { ContentItem, ContentType, MediaTitleRow } from '../types/index.js';
 import { kvGet, kvSet, CacheKeys, TTL } from '../cache.js';
 import { searchTmdb, extractYear, tmdbPoster } from '../metadata/tmdb.js';
 import { searchAnilist, isAnimeOnAnilist, anilistTitle } from '../metadata/anilist.js';
-import { batchResolveFromTmdb, batchResolveFromAnilist } from '../identity/resolver.js';
+import { batchResolveFromTmdb, batchResolveFromAnilist, resolveFromMoviebox } from '../identity/resolver.js';
 import { tmdbResultToItem, anilistToItem, jsonResponse, errorResponse } from '../normalizer.js';
 
 const search = new Hono<{ Bindings: Env }>();
+
+interface MovieBoxSearchItem {
+  subjectId: string;
+  subjectType?: number | null;
+  type?: string | null;
+  title: string;
+  releaseDate?: string | null;
+  poster?: string | null;
+  hasResource?: boolean | null;
+}
+
+function normalizedSearchTitle(value: string): string {
+  return value.normalize('NFKC').replace(/\[[^\]]*\]/g, ' ').replace(/\([^)]*\)/g, ' ').replace(/[^\p{L}\p{N}]+/gu, ' ').trim().toLowerCase();
+}
+
+function isLanguageVariant(value: string): boolean {
+  return /\[[^\]]+\]/.test(value);
+}
+
+async function searchMoviebox(env: Env, keyword: string): Promise<MovieBoxSearchItem[]> {
+  if (!env.RENDER_BACKEND_URL || !env.X_SPUN_SECRET) return [];
+  try {
+    const response = await fetch(`${env.RENDER_BACKEND_URL.replace(/\/$/, '')}/catalog/search?keyword=${encodeURIComponent(keyword)}`, {
+      headers: { 'X-Spun-Secret': env.X_SPUN_SECRET, Accept: 'application/json' },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!response.ok) return [];
+    const payload = await response.json() as { items?: MovieBoxSearchItem[] };
+    return Array.isArray(payload.items) ? payload.items : [];
+  } catch {
+    return [];
+  }
+}
+
+async function batchMovieboxItems(env: Env, items: MovieBoxSearchItem[], type: 'movie' | 'tv', canonicalTitles: Set<string>): Promise<ContentItem[]> {
+  const rows = await Promise.all(items.slice(0, 20).map(async (item) => {
+    const movieboxId = Number(item.subjectId);
+    if (!Number.isSafeInteger(movieboxId) || movieboxId <= 0 || !item.title) return null;
+    const year = item.releaseDate ? Number(String(item.releaseDate).slice(0, 4)) || null : null;
+    const row = await resolveFromMoviebox(env, movieboxId, type, item.title, {
+      year,
+      posterPath: item.poster ?? null,
+    });
+    return { item, row };
+  }));
+  return rows.filter((value): value is { item: MovieBoxSearchItem; row: MediaTitleRow } => value !== null).filter(({ item }) => retainMovieboxResult(item, canonicalTitles)).map(({ item, row }) => ({
+    spun_id: row!.spun_id,
+    type,
+    title: row!.title || item.title,
+    year: row!.year,
+    rating: row!.rating,
+    poster: row!.poster_path,
+  }));
+}
+
+function retainMovieboxResult(item: MovieBoxSearchItem, canonicalTitles: Set<string>): boolean {
+  const title = normalizedSearchTitle(item.title);
+  return isLanguageVariant(item.title) || !canonicalTitles.has(title);
+}
 
 // ─── Known anime on TMDB — titles we strip from TMDB results ─────────────────
 // We do a cheap title check first, then confirm via AniList only if needed.
@@ -159,26 +218,39 @@ search.get('/', async (c) => {
     totalResults = items.length;
 
   } else if (normalizedType === 'movie') {
-    const tmdb       = await searchTmdb(c.env, q, page);
-    const movieOnly  = tmdb.results.filter((r) => r.media_type === 'movie');
-    results          = await batchTmdbItems(c.env, movieOnly as any);
+    const [tmdb, moviebox] = await Promise.all([
+      searchTmdb(c.env, q, page),
+      searchMoviebox(c.env, q),
+    ]);
+    const movieOnly = tmdb.results.filter((r) => r.media_type === 'movie');
+    const tmdbItems = await batchTmdbItems(c.env, movieOnly as any);
+    const canonicalTitles = new Set(tmdbItems.map((item) => normalizedSearchTitle(item.title)));
+    const movieboxItems = await batchMovieboxItems(c.env, moviebox.filter((item) => item.subjectType === 1 || item.type === 'movie'), 'movie', canonicalTitles);
+    results = [...tmdbItems, ...movieboxItems];
 
-    totalPages       = tmdb.total_pages;
-    totalResults     = tmdb.total_results;
+    totalPages = tmdb.total_pages;
+    totalResults = tmdb.total_results + movieboxItems.length;
 
   } else if (normalizedType === 'tv') {
-    const tmdb      = await searchTmdb(c.env, q, page);
-    const tvOnly    = tmdb.results.filter((r) => r.media_type === 'tv');
-    results         = await batchTmdbItems(c.env, tvOnly as any);
+    const [tmdb, moviebox] = await Promise.all([
+      searchTmdb(c.env, q, page),
+      searchMoviebox(c.env, q),
+    ]);
+    const tvOnly = tmdb.results.filter((r) => r.media_type === 'tv');
+    const tmdbItems = await batchTmdbItems(c.env, tvOnly as any);
+    const canonicalTitles = new Set(tmdbItems.map((item) => normalizedSearchTitle(item.title)));
+    const movieboxItems = await batchMovieboxItems(c.env, moviebox.filter((item) => item.subjectType === 2 || item.type === 'tv'), 'tv', canonicalTitles);
+    results = [...tmdbItems, ...movieboxItems];
 
-    totalPages      = tmdb.total_pages;
-    totalResults    = tmdb.total_results;
+    totalPages = tmdb.total_pages;
+    totalResults = tmdb.total_results + movieboxItems.length;
 
   } else {
     // All — fan-out TMDB + AniList in parallel
-    const [tmdb, anilistResult] = await Promise.all([
+    const [tmdb, anilistResult, moviebox] = await Promise.all([
       searchTmdb(c.env, q, page),
       searchAnilist(c.env, q, page, 10),
+      searchMoviebox(c.env, q),
     ]);
 
     // TMDB supplies movies and TV; AniList supplies anime. Avoid one metadata
@@ -189,14 +261,24 @@ search.get('/', async (c) => {
       batchTmdbItems(c.env, noAnime as any),
       batchAnilistItems(c.env, anilistResult.media),
     ]);
+    const canonicalTitles = new Set([
+      ...tmdbItems.map((item) => normalizedSearchTitle(item.title)),
+      ...animeItems.map((item) => normalizedSearchTitle(item.title)),
+    ]);
+    const [movieboxMovies, movieboxTv] = await Promise.all([
+      batchMovieboxItems(c.env, moviebox.filter((item) => item.subjectType === 1 || item.type === 'movie'), 'movie', canonicalTitles),
+      batchMovieboxItems(c.env, moviebox.filter((item) => item.subjectType === 2 || item.type === 'tv'), 'tv', canonicalTitles),
+    ]);
 
-    // Interleave: movies/TV first, then anime
-    results      = [
+    // Interleave: canonical TMDB/AniList results first, then permitted MovieBox variants.
+    results = [
       ...tmdbItems.filter((i): i is ContentItem => i !== null),
       ...animeItems,
+      ...movieboxMovies,
+      ...movieboxTv,
     ];
-    totalPages   = Math.max(tmdb.total_pages, anilistResult.hasNextPage ? page + 1 : page);
-    totalResults = tmdb.total_results + animeItems.length;
+    totalPages = Math.max(tmdb.total_pages, anilistResult.hasNextPage ? page + 1 : page);
+    totalResults = tmdb.total_results + animeItems.length + movieboxMovies.length + movieboxTv.length;
   }
 
   const payload = {
@@ -258,11 +340,14 @@ search.get('/movie', async (c) => {
   const cached   = await kvGet(c.env, cacheKey);
   if (cached) return jsonResponse(cached);
 
-  const tmdb      = await searchTmdb(c.env, q, page);
+  const [tmdb, moviebox] = await Promise.all([searchTmdb(c.env, q, page), searchMoviebox(c.env, q)]);
   const movieOnly = tmdb.results.filter((r) => r.media_type === 'movie');
-  const results   = await batchTmdbItems(c.env, movieOnly as any);
+  const tmdbItems = await batchTmdbItems(c.env, movieOnly as any);
+  const canonicalTitles = new Set(tmdbItems.map((item) => normalizedSearchTitle(item.title)));
+  const movieboxItems = await batchMovieboxItems(c.env, moviebox.filter((item) => item.subjectType === 1 || item.type === 'movie'), 'movie', canonicalTitles);
+  const results = [...tmdbItems, ...movieboxItems];
 
-  const payload = { page, total_pages: tmdb.total_pages, total_results: tmdb.total_results, results };
+  const payload = { page, total_pages: tmdb.total_pages, total_results: tmdb.total_results + movieboxItems.length, results };
   await kvSet(c.env, cacheKey, payload, TTL.search);
   return jsonResponse(payload);
 });
@@ -278,11 +363,14 @@ search.get('/tv', async (c) => {
   const cached   = await kvGet(c.env, cacheKey);
   if (cached) return jsonResponse(cached);
 
-  const tmdb    = await searchTmdb(c.env, q, page);
-  const tvOnly  = tmdb.results.filter((r) => r.media_type === 'tv');
-  const results = await batchTmdbItems(c.env, tvOnly as any);
+  const [tmdb, moviebox] = await Promise.all([searchTmdb(c.env, q, page), searchMoviebox(c.env, q)]);
+  const tvOnly = tmdb.results.filter((r) => r.media_type === 'tv');
+  const tmdbItems = await batchTmdbItems(c.env, tvOnly as any);
+  const canonicalTitles = new Set(tmdbItems.map((item) => normalizedSearchTitle(item.title)));
+  const movieboxItems = await batchMovieboxItems(c.env, moviebox.filter((item) => item.subjectType === 2 || item.type === 'tv'), 'tv', canonicalTitles);
+  const results = [...tmdbItems, ...movieboxItems];
 
-  const payload = { page, total_pages: tmdb.total_pages, total_results: tmdb.total_results, results };
+  const payload = { page, total_pages: tmdb.total_pages, total_results: tmdb.total_results + movieboxItems.length, results };
   await kvSet(c.env, cacheKey, payload, TTL.search);
   return jsonResponse(payload);
 });

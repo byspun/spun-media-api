@@ -4,7 +4,7 @@
 // resolving spun_ids in batch, and caching the final results in KV.
 
 import type { Env } from '../types/env.js';
-import type { AniListMedia, ContentItem, MediaTitleRow } from '../types/index.js';
+import type { AniListMedia, ContentItem, HomeRow, MediaTitleRow } from '../types/index.js';
 import { kvSet, CacheKeys, TTL, updateHomeBuildStatus } from '../cache.js';
 import {
   getTmdbTrending,
@@ -30,7 +30,7 @@ import {
   anilistTitle,
   getAnilistSummary,
 } from '../metadata/anilist.js';
-import { batchResolveFromTmdb, batchResolveFromAnilist, getBySpunId, getBySpunIds } from '../identity/resolver.js';
+import { batchResolveFromTmdb, batchResolveFromAnilist, getBySpunId, getBySpunIds, resolveFromMoviebox } from '../identity/resolver.js';
 import { getJikanAnimeDetail } from '../metadata/jikan.js';
 import { tmdbResultToItem, anilistToItem } from '../normalizer.js';
 import { getDb } from '../db.js';
@@ -51,6 +51,43 @@ import type { FranchiseEntry } from '../config/types.js';
 
 const ROW_MAX  = 20; // Reduced from 30 to stay within subrequest limits
 const HERO_MAX = 7;
+
+async function madeInNaijaRow(env: Env): Promise<HomeRow> {
+  const empty: HomeRow = { id: 'made-in-naija', title: 'Made in Naija', items: [] };
+  if (!env.RENDER_BACKEND_URL || !env.X_SPUN_SECRET) return empty;
+  try {
+    const response = await fetch(`${env.RENDER_BACKEND_URL.replace(/\/$/, '')}/home/made-in-naija`, {
+      headers: { 'X-Spun-Secret': env.X_SPUN_SECRET, Accept: 'application/json' },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!response.ok) return empty;
+    const payload = await response.json() as { items?: Array<{ moviebox_id: string; title: string; year?: number | null; rating?: number | null; poster?: string | null }> };
+    const items = Array.isArray(payload.items) ? payload.items.slice(0, ROW_MAX) : [];
+    const rows = await Promise.all(items.map(async (item) => {
+      const movieboxId = Number(item.moviebox_id);
+      if (!Number.isSafeInteger(movieboxId) || movieboxId <= 0 || !item.title) return null;
+      return resolveFromMoviebox(env, movieboxId, 'movie', item.title, {
+        year: item.year ?? null,
+        rating: item.rating ?? null,
+        posterPath: item.poster ?? null,
+      });
+    }));
+    return {
+      id: 'made-in-naija',
+      title: 'Made in Naija',
+      items: rows.filter(Boolean).map((row) => ({
+        spun_id: row!.spun_id,
+        type: 'movie' as const,
+        title: row!.title,
+        year: row!.year,
+        rating: row!.rating,
+        poster: row!.poster_path,
+      })),
+    };
+  } catch {
+    return empty;
+  }
+}
 
 // ─── Shared converters (Batch Optimized) ──────────────────────────────────────
 
@@ -410,7 +447,10 @@ export async function buildMovieHome(env: Env) {
     franchiseRow(env, 'james-bond',        'James Bond',             jamesBond),
   ]);
 
-  const hero = await buildHero(env, movieHero, trendingItems);
+  const [hero, naijaRow] = await Promise.all([
+    buildHero(env, movieHero, trendingItems),
+    madeInNaijaRow(env),
+  ]);
 
   return {
     hero,
@@ -419,6 +459,7 @@ export async function buildMovieHome(env: Env) {
       { id: 'coming-soon',         title: 'Coming Soon',           items: upcomingItems   },
       mcuRow, dceuRow, dcuRow,
       { id: 'this-year',           title: "This Year's Best",      items: thisYearItems   },
+      naijaRow,
       { id: 'all-time-greats',     title: 'All-Time Greats',       items: allTimeItems    },
       { id: 'hidden-gems',         title: 'Hidden Gems',           items: hiddenItems     },
       { id: 'action-adrenaline',   title: 'Action & Adrenaline',   items: actionItems     },
@@ -748,13 +789,16 @@ export async function buildGeneralHome(env: Env) {
     franchiseRow(env, 'attack-on-titan',  'Attack on Titan',   attackOnTitan),
   ]);
 
-  const hero = await buildHero(env, homeHero, trendingMixed);
-
+    const [hero, naijaRow] = await Promise.all([
+    buildHero(env, homeHero, trendingMixed),
+    madeInNaijaRow(env),
+  ]);
   return {
     hero,
     rows: [
       { id: 'trending-today',      title: 'Trending Today',          items: trendingMixed    },
-      { id: 'new-this-week',       title: 'New This Week',           items: newThisWeek      },
+            { id: 'new-this-week',      title: 'New This Week',           items: newThisWeek      },
+      naijaRow,
       { id: 'airing-now',          title: 'Airing Now',              items: airingItems      },
       { id: 'just-added',          title: 'Just Added',              items: justAddedItems   },
       mcuRow, aotRow,
