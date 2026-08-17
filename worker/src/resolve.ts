@@ -112,6 +112,10 @@ function validateIdentifier(namespace: ResolveNamespace, id: string): void {
     if (!/^tt\d{7,12}$/.test(id)) fail('RESOLVE_IDENTIFIER_INVALID', 400);
     return;
   }
+  if (namespace === 'moviebox') {
+    if (!/^\d{19}$/.test(id)) fail('RESOLVE_IDENTIFIER_INVALID', 400);
+    return;
+  }
   if (!positiveInteger(id)) fail('RESOLVE_IDENTIFIER_INVALID', 400);
 }
 
