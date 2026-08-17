@@ -16,6 +16,7 @@ import { searchTmdb, extractYear, tmdbPoster } from '../metadata/tmdb.js';
 import { searchAnilist, isAnimeOnAnilist, anilistTitle } from '../metadata/anilist.js';
 import { batchResolveFromTmdb, batchResolveFromAnilist, resolveFromMoviebox } from '../identity/resolver.js';
 import { tmdbResultToItem, anilistToItem, jsonResponse, errorResponse } from '../normalizer.js';
+import { searchMoviebox as searchMovieboxMetadata } from '../metadata/moviebox.js';
 
 const search = new Hono<{ Bindings: Env }>();
 
@@ -38,18 +39,7 @@ function isLanguageVariant(value: string): boolean {
 }
 
 async function searchMoviebox(env: Env, keyword: string): Promise<MovieBoxSearchItem[]> {
-  if (!env.RENDER_BACKEND_URL || !env.X_SPUN_SECRET) return [];
-  try {
-    const response = await fetch(`${env.RENDER_BACKEND_URL.replace(/\/$/, '')}/catalog/search?keyword=${encodeURIComponent(keyword)}`, {
-      headers: { 'X-Spun-Secret': env.X_SPUN_SECRET, Accept: 'application/json' },
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!response.ok) return [];
-    const payload = await response.json() as { items?: MovieBoxSearchItem[] };
-    return Array.isArray(payload.items) ? payload.items : [];
-  } catch {
-    return [];
-  }
+  return searchMovieboxMetadata(env, keyword) as Promise<MovieBoxSearchItem[]>;
 }
 
 async function batchMovieboxItems(env: Env, items: MovieBoxSearchItem[], type: 'movie' | 'tv', canonicalTitles: Set<string>): Promise<ContentItem[]> {

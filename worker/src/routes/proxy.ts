@@ -162,14 +162,14 @@ proxy.get('/subtitles', async (c) => {
 
   const srt = decodeSubtitle(subtitleBytes);
   const vtt = srtToVtt(srt);
-  if (!vtt.includes('-->')) {
-    return errorResponse('SUBTITLE_CONVERSION_FAILED', 'Subtitle track could not be prepared.', 422);
-  }
-
-  return new Response(vtt, {
+  const body = payload.format === 'srt' ? srt : vtt;
+  if (!body.includes('-->')) return errorResponse('SUBTITLE_CONVERSION_FAILED', 'Subtitle track could not be prepared.', 422);
+  const filename = `${payload.language_code || 'subtitle'}.${payload.format}`;
+  return new Response(body, {
     status: 200,
     headers: {
-      'Content-Type': 'text/vtt; charset=utf-8',
+      'Content-Type': payload.format === 'srt' ? 'application/x-subrip; charset=utf-8' : 'text/vtt; charset=utf-8',
+      'Content-Disposition': `${payload.disposition === 'attachment' ? 'attachment' : 'inline'}; filename="${filename}"`,
       'Cache-Control': 'private, max-age=900',
       'X-Content-Type-Options': 'nosniff',
     },

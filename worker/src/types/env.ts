@@ -13,8 +13,12 @@ export interface Env {
   // Neon Postgres — pooled connection string
   NEON_DATABASE_URL: string;
 
-  // Render backend (providers layer) — wired in Session 2
+  // Render backend (content resolution only)
   RENDER_BACKEND_URL: string;
+
+  // Direct MovieBox catalogue access owned by the Worker metadata layer
+  MOVIEBOX_API_BASE?: string;
+  MOVIEBOX_API_SECRET?: string;
 
   // Shared secret for Worker ↔ Render auth
   X_SPUN_SECRET: string;

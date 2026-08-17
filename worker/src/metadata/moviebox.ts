@@ -1,32 +1,15 @@
 import type { Env } from '../types/env.js';
 import type { MediaTitleRow } from '../types/index.js';
-
-export interface MovieBoxInfo {
-  subjectId: string;
-  subjectType?: number | null;
-  type?: string | null;
-  title: string;
-  description?: string | null;
-  releaseDate?: string | null;
-  poster?: string | null;
-  rating?: number | null;
-  runtime?: number | null;
-  genre?: string | null;
-  country?: string | null;
-  language?: string | null;
-}
-
-export async function getMovieboxInfo(env: Env, row: MediaTitleRow): Promise<MovieBoxInfo | null> {
-  if (!env.RENDER_BACKEND_URL || row.moviebox_id == null) return null;
-  try {
-    const response = await fetch(`${env.RENDER_BACKEND_URL.replace(/\/$/, '')}/catalog/info?moviebox_id=${encodeURIComponent(String(row.moviebox_id))}`, {
-      headers: { 'X-Spun-Secret': env.X_SPUN_SECRET, Accept: 'application/json' },
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!response.ok) return null;
-    const payload = await response.json() as { item?: MovieBoxInfo };
-    return payload.item ?? null;
-  } catch {
-    return null;
-  }
-}
+function normalizeTitle(value: unknown): string { return String(value ?? '').normalize('NFKC').replace(/\[[^\]]*\]/g,' ').replace(/\([^)]*\)/g,' ').replace(/[^\p{L}\p{N}]+/gu,' ').trim().toLowerCase(); }
+function yearFromDate(value: unknown): number | null { const match=String(value ?? '').match(/(\d{4})/); return match ? Number(match[1]) : null; }
+export interface MovieBoxInfo { subjectId:string; subjectType?:number|null; type?:string|null; title:string; description?:string|null; releaseDate?:string|null; poster?:string|null; rating?:number|null; runtime?:number|null; genre?:string|null; country?:string|null; language?:string|null }
+export interface MovieBoxSearchItem extends MovieBoxInfo { hasResource?:boolean|null }
+function base(env:Env):string { return (env.MOVIEBOX_API_BASE ?? '').replace(/\/$/,''); }
+async function request(env:Env,path:string,init:RequestInit={}):Promise<any|null>{if(!base(env))return null;try{const r=await fetch(`${base(env)}${path}`,{...init,headers:{'X-Worker-Secret':env.MOVIEBOX_API_SECRET??'',Accept:'application/json',...(init.headers??{})},signal:AbortSignal.timeout(20_000)});if(!r.ok)return null;return await r.json();}catch{return null;}}
+function item(v:any,id?:string):MovieBoxSearchItem|null{const title=String(v?.title??v?.name??'');const subjectId=String(v?.subjectId??v?.id??id??'');if(!title||!subjectId)return null;return {subjectId,subjectType:v?.subjectType??null,type:v?.type??null,title,description:v?.description??null,releaseDate:v?.releaseDate??null,poster:v?.poster??v?.posterUrl??v?.cover??null,rating:typeof v?.rating==='number'?v.rating:null,runtime:v?.runtime??null,genre:v?.genre??null,country:v?.country??null,language:v?.language??null,hasResource:v?.hasResource??null};}
+export function scoreMovieBoxCandidate(title:string,year:number|null,candidate:MovieBoxSearchItem):number{const a=normalizeTitle(title),b=normalizeTitle(candidate.title);if(!a||!b)return -Infinity;let s=a===b?80:(a.includes(b)||b.includes(a)?32:-Infinity);const y=yearFromDate(candidate.releaseDate);if(Number.isFinite(s)&&year&&y)s+=year===y?35:Math.abs(year-y)>3?-35:0;return s;}
+export async function searchMoviebox(env:Env,keyword:string):Promise<MovieBoxSearchItem[]>{const p=await request(env,'/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({keyword,page:1,perPage:10})});const values=Array.isArray(p?.items)?p.items:Array.isArray(p?.results)?p.results:[];return values.map((v:any)=>item(v)).filter(Boolean) as MovieBoxSearchItem[];}
+export async function getMovieboxInfo(env:Env,row:MediaTitleRow):Promise<MovieBoxInfo|null>{if(row.moviebox_id==null)return null;const p=await request(env,`/info/${encodeURIComponent(String(row.moviebox_id))}`);return item(p?.subject??p?.item??p,String(row.moviebox_id)) as MovieBoxInfo|null;}
+export async function getMovieboxInfoById(env:Env,id:number|string):Promise<MovieBoxInfo|null>{const p=await request(env,`/info/${encodeURIComponent(String(id))}`);return item(p?.subject??p?.item??p,String(id));}
+export async function chooseMoviebox(env:Env,title:string,year:number|null):Promise<MovieBoxSearchItem|null>{const candidates=await searchMoviebox(env,title);const ranked=candidates.map(c=>({c,s:scoreMovieBoxCandidate(title,year,c)})).filter(x=>Number.isFinite(x.s)).sort((a,b)=>b.s-a.s);return ranked[0]&&ranked[0].s>=70?ranked[0].c:null;}
+export async function getMadeInNaija(env:Env):Promise<MovieBoxSearchItem[]>{const p=await request(env,'/home/rows');const rows=Array.isArray(p?.rows)?p.rows:Array.isArray(p)?p:[];const row=rows.find((v:any)=>/nollywood|naija|nigerian/i.test(String(v?.title??v?.name??'')));const opId=row?.opId??row?.op_id??row?.id;if(!opId)return[];const q=await request(env,`/home/subjects?opId=${encodeURIComponent(String(opId))}`);const values=Array.isArray(q?.subjects)?q.subjects:Array.isArray(q?.items)?q.items:Array.isArray(q)?q:[];return values.map((v:any)=>item(v)).filter(Boolean) as MovieBoxSearchItem[];}

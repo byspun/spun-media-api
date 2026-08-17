@@ -11,6 +11,8 @@ export interface SubtitleProxyTokenPayload {
   kind: 'subtitle';
   archive_url: string;
   language_code: string;
+  format: 'vtt' | 'srt';
+  disposition: 'inline' | 'attachment';
   expires_at: number;
 }
 
@@ -48,7 +50,7 @@ async function importEncryptionKey(secret: string): Promise<CryptoKey> {
 function isValidSubtitlePayload(value: unknown): value is SubtitleProxyTokenPayload {
   if (!value || typeof value !== 'object') return false;
   const payload = value as Record<string, unknown>;
-  return payload.v === TOKEN_VERSION && payload.kind === 'subtitle' && typeof payload.archive_url === 'string' && payload.archive_url.length > 0 && typeof payload.language_code === 'string' && payload.language_code.length > 0 && typeof payload.expires_at === 'number' && Number.isFinite(payload.expires_at);
+  return payload.v === TOKEN_VERSION && payload.kind === 'subtitle' && typeof payload.archive_url === 'string' && payload.archive_url.length > 0 && typeof payload.language_code === 'string' && payload.language_code.length > 0 && (payload.format === 'vtt' || payload.format === 'srt') && (payload.disposition === 'inline' || payload.disposition === 'attachment') && typeof payload.expires_at === 'number' && Number.isFinite(payload.expires_at);
 }
 
 function isValidStreamPayload(value: unknown): value is StreamProxyTokenPayload {
@@ -83,9 +85,9 @@ async function decryptPayload(secret: string, token: string, now: number): Promi
   }
 }
 
-export async function createSubtitleProxyToken(secret: string, archiveUrl: string, languageCode: string, now = Date.now()): Promise<{ token: string; expiresAt: string }> {
+export async function createSubtitleProxyToken(secret: string, archiveUrl: string, languageCode: string, mode: { format?: 'vtt' | 'srt'; disposition?: 'inline' | 'attachment' } = {}, now = Date.now()): Promise<{ token: string; expiresAt: string }> {
   const expiresAt = now + SUBTITLE_PROXY_TOKEN_TTL_SECONDS * 1000;
-  const token = await encryptPayload({ v: 1, kind: 'subtitle', archive_url: archiveUrl, language_code: languageCode, expires_at: expiresAt }, secret);
+  const token = await encryptPayload({ v: 1, kind: 'subtitle', archive_url: archiveUrl, language_code: languageCode, format: mode.format ?? 'vtt', disposition: mode.disposition ?? 'inline', expires_at: expiresAt }, secret);
   return { token, expiresAt: new Date(expiresAt).toISOString() };
 }
 

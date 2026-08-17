@@ -6,7 +6,7 @@
   "scripts": {
     "dev":        "tsx watch index.ts",
     "start":      "node dist/index.js",
-    "build":      "tsc && node scripts/copy-vendors.mjs",
+    "build":      "tsc",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {

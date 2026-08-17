@@ -32,6 +32,7 @@ import {
 } from '../metadata/anilist.js';
 import { batchResolveFromTmdb, batchResolveFromAnilist, getBySpunId, getBySpunIds, resolveFromMoviebox } from '../identity/resolver.js';
 import { getJikanAnimeDetail } from '../metadata/jikan.js';
+import { getMadeInNaija } from '../metadata/moviebox.js';
 import { tmdbResultToItem, anilistToItem } from '../normalizer.js';
 import { getDb } from '../db.js';
 
@@ -54,39 +55,11 @@ const HERO_MAX = 7;
 
 async function madeInNaijaRow(env: Env): Promise<HomeRow> {
   const empty: HomeRow = { id: 'made-in-naija', title: 'Made in Naija', items: [] };
-  if (!env.RENDER_BACKEND_URL || !env.X_SPUN_SECRET) return empty;
   try {
-    const response = await fetch(`${env.RENDER_BACKEND_URL.replace(/\/$/, '')}/home/made-in-naija`, {
-      headers: { 'X-Spun-Secret': env.X_SPUN_SECRET, Accept: 'application/json' },
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!response.ok) return empty;
-    const payload = await response.json() as { items?: Array<{ moviebox_id: string; title: string; year?: number | null; rating?: number | null; poster?: string | null }> };
-    const items = Array.isArray(payload.items) ? payload.items.slice(0, ROW_MAX) : [];
-    const rows = await Promise.all(items.map(async (item) => {
-      const movieboxId = Number(item.moviebox_id);
-      if (!Number.isSafeInteger(movieboxId) || movieboxId <= 0 || !item.title) return null;
-      return resolveFromMoviebox(env, movieboxId, 'movie', item.title, {
-        year: item.year ?? null,
-        rating: item.rating ?? null,
-        posterPath: item.poster ?? null,
-      });
-    }));
-    return {
-      id: 'made-in-naija',
-      title: 'Made in Naija',
-      items: rows.filter(Boolean).map((row) => ({
-        spun_id: row!.spun_id,
-        type: 'movie' as const,
-        title: row!.title,
-        year: row!.year,
-        rating: row!.rating,
-        poster: row!.poster_path,
-      })),
-    };
-  } catch {
-    return empty;
-  }
+    const items = (await getMadeInNaija(env)).slice(0, ROW_MAX);
+    const rows = await Promise.all(items.map((item) => resolveFromMoviebox(env, Number(item.subjectId), 'movie', item.title, { year: item.releaseDate ? Number(String(item.releaseDate).slice(0, 4)) || null : null, rating: item.rating ?? null, posterPath: item.poster ?? null })));
+    return { id: 'made-in-naija', title: 'Made in Naija', items: rows.filter(Boolean).map((row) => ({ spun_id: row!.spun_id, type: 'movie' as const, title: row!.title, year: row!.year, rating: row!.rating, poster: row!.poster_path })) };
+  } catch { return empty; }
 }
 
 // ─── Shared converters (Batch Optimized) ──────────────────────────────────────

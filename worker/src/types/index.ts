@@ -156,39 +156,43 @@ export interface SubtitleTrack {
 }
 
 export interface StreamEntry {
-  url:       string;
-  format:    'mp4' | 'hls' | 'dash' | 'mkv';
-  quality:   '4k' | '1080p' | '720p' | '480p' | '360p' | 'auto';
-  audio:     string;
-  subtitles: SubtitleTrack[];
+  quality: '4k' | '1080p' | '720p' | '480p' | '360p' | 'auto';
+  format: 'mp4' | 'hls' | 'dash' | 'mkv';
+  audio: string;
+  url: string;
 }
 
 export interface StreamResponse {
   spun_id: string;
+  title: string;
+  type: ContentType;
   streams: StreamEntry[];
+  subtitles: SubtitleTrack[];
 }
 
 // ─── Download response ────────────────────────────────────────────────────────
 
-export interface DownloadSubtitle {
-  url:           string;
-  language:      string;
-  language_code: string;
-  format:        'zip' | 'srt' | 'vtt';
+export interface DownloadEntry {
+  quality: '4k' | '1080p' | '720p' | '480p' | '360p' | 'auto';
+  format: 'mp4' | 'mkv' | 'dash';
+  audio: string;
+  url: string;
+  filename: string | null;
+  size: string | null;
 }
 
-export interface DownloadEntry {
-  url:       string;
-  format:    'mp4' | 'mkv';
-  quality:   '4k' | '1080p' | '720p' | '480p' | '360p';
-  size:      string | null;
-  filename:  string | null;
-  subtitles: DownloadSubtitle[];
+export interface DownloadGroup {
+  season: number;
+  episode: number;
+  options: DownloadEntry[];
 }
 
 export interface DownloadResponse {
-  spun_id:   string;
-  downloads: DownloadEntry[];
+  spun_id: string;
+  title: string;
+  type: ContentType;
+  downloads: DownloadEntry[] | DownloadGroup[];
+  subtitles: SubtitleTrack[];
 }
 
 // ─── Search response ──────────────────────────────────────────────────────────

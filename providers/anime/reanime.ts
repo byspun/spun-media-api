@@ -1,0 +1,5 @@
+import { attachSubtitles } from '../normalizer.js';
+import { detectFormat, isSafeHttpUrl, normalizeQuality } from '../mapper.js';
+import type { AnimeProviderInput, RawStream } from '../shared/types.js';
+const BASE='https://reanime.to';
+export async function getReanimeStreams(input: AnimeProviderInput): Promise<RawStream[]> { try { const r=await fetch(`${BASE}/api/flix/${input.anilist_id}/${input.episode}`,{headers:{Accept:'application/json'},signal:AbortSignal.timeout(20_000)}); const p:any=await r.json(); const values=Array.isArray(p?.streams)?p.streams:Array.isArray(p?.sources)?p.sources:[]; const streams:RawStream[]=values.filter((x:any)=>isSafeHttpUrl(x.url)&&!String(x.url).includes('localhost')&&!['embed','hls-redirect'].includes(String(x.type))).map((x:any)=>({url:x.url,format:detectFormat(x.url,x.type) as any,quality:normalizeQuality(x.quality??x.label),audio:input.dub?'English':'Japanese',provider:'reanime'})).filter(x=>x.format!=='unknown'); return attachSubtitles(streams,[]); } catch{return [];}}

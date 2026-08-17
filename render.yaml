@@ -20,3 +20,7 @@ services:
         sync: false
       - key: TMDB_API_KEY
         sync: false
+      - key: DARATECH_API_BASE
+        value: https://apimovie.runflix.name.ng/v1
+      - key: DARATECH_API_KEY
+        sync: false
