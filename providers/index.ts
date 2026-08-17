@@ -24,8 +24,8 @@ import { getAnibdStreams } from './anime/anibd.js';
 import { getMovieboxApiMovieStreams, getMovieboxApiTvStreams } from './shared/moviebox-api-stream.js';
 import { attachedSubtitles, buildDownloadResponse, buildStreamResponse } from './normalizer.js';
 import { recordFailure, recordSuccess, isHealthy, getHealthRecords } from './health.js';
-import { fetchWithRetry, findBestMatch } from './shared/http.js';
 import type { AnimeProviderInput, MovieProviderInput, ProviderId, RawDownload, RawStream, TvProviderInput } from './shared/types.js';
+import { diagnosticAuth, runDaratechDiagnostic } from './diagnostics.js';
 
 const app = Fastify({ logger: true, trustProxy: true });
 
@@ -55,174 +55,6 @@ app.log.info({
 
 function auth(request: any): boolean {
   return Boolean(env.secret) && request.headers['x-spun-secret'] === env.secret;
-}
-
-function diagnosticAuth(request: any): boolean {
-  return Boolean(env.diagnosticSecret) && request.headers['x-diagnostic-secret'] === env.diagnosticSecret;
-}
-
-function redactDiagnosticText(value: string): string {
-  let redacted = value;
-  if (env.daratechKey) redacted = redacted.split(env.daratechKey).join('[redacted-secret]');
-  if (env.diagnosticSecret) redacted = redacted.split(env.diagnosticSecret).join('[redacted-diagnostic-secret]');
-  return redacted
-    .replace(/(authorization\s*[:=]\s*)([^,\s}]+)/gi, '$1[redacted]')
-    .replace(/([?&](?:api[-_]?key|token|secret|authorization)=)[^&\s]+/gi, '$1[redacted]')
-    .slice(0, 8000);
-}
-
-function diagnosticResponseShape(payload: unknown): Record<string, unknown> {
-  if (Array.isArray(payload)) return { body_type: 'array', body_length: payload.length };
-  if (payload && typeof payload === 'object') {
-    const body = payload as Record<string, unknown>;
-    const items = Array.isArray(body.items) ? body.items : Array.isArray(body.results) ? body.results : null;
-    const qualities = Array.isArray(body.qualities) ? body.qualities : null;
-    return {
-      body_type: 'object',
-      top_keys: Object.keys(body).slice(0, 30),
-      item_count: items?.length ?? null,
-      quality_count: qualities?.length ?? null,
-    };
-  }
-  return { body_type: payload === null ? 'null' : typeof payload };
-}
-
-type DiagnosticStep = {
-  operation: string;
-  upstream_path: string;
-  status: number | null;
-  ok: boolean;
-  elapsed_ms: number;
-  response_headers?: Record<string, string>;
-  response_bytes?: number;
-  response_body?: string;
-  response_shape?: Record<string, unknown>;
-  error?: string;
-  payload?: unknown;
-};
-
-async function diagnosticFetch(
-  url: string,
-  operation: string,
-  headers: Record<string, string>,
-  timeout: number,
-): Promise<DiagnosticStep> {
-  const started = Date.now();
-  let upstreamPath = '[invalid-url]';
-  try {
-    const parsed = new URL(url);
-    upstreamPath = `${parsed.pathname}${parsed.search}`;
-  } catch {
-    // Keep the redacted fallback path.
-  }
-
-  try {
-    const response = await fetchWithRetry(url, {
-      headers,
-      timeout,
-      retries: 0,
-    });
-    const rawBody = await response.text();
-    const responseBody = redactDiagnosticText(rawBody);
-    let payload: unknown = null;
-    try {
-      payload = JSON.parse(rawBody);
-    } catch {
-      // Preserve the exact text for non-JSON upstream responses.
-    }
-    const responseHeaders: Record<string, string> = {};
-    for (const name of ['content-type', 'server', 'www-authenticate', 'retry-after', 'cf-ray']) {
-      const value = response.headers.get(name);
-      if (value) responseHeaders[name] = value;
-    }
-    return {
-      operation,
-      upstream_path: upstreamPath,
-      status: response.status,
-      ok: response.ok,
-      elapsed_ms: Date.now() - started,
-      response_headers: responseHeaders,
-      response_bytes: rawBody.length,
-      response_body: response.ok ? undefined : responseBody,
-      response_shape: diagnosticResponseShape(payload),
-      payload,
-    };
-  } catch (error) {
-    return {
-      operation,
-      upstream_path: upstreamPath,
-      status: null,
-      ok: false,
-      elapsed_ms: Date.now() - started,
-      error: redactDiagnosticText(String(error instanceof Error ? error.message : error)),
-      payload: null,
-    };
-  }
-}
-
-function publicDiagnosticStep(step: DiagnosticStep): Omit<DiagnosticStep, 'payload'> {
-  const { payload: _payload, ...publicStep } = step;
-  return publicStep;
-}
-
-async function runDaratechDiagnostic(type: 'movie' | 'tv', query: any) {
-  const title = String(query.title ?? '').trim();
-  const year = query.year !== undefined && query.year !== '' ? Number(query.year) : null;
-  const season = type === 'tv' ? Number(query.season ?? 1) : null;
-  const episode = type === 'tv' ? Number(query.episode ?? 1) : null;
-  const headers = {
-    Authorization: `Bearer ${env.daratechKey}`,
-    Accept: 'application/json',
-  };
-  const base = env.daratechBase.replace(/\/$/, '');
-  const searchUrl = type === 'movie'
-    ? `${base}/search/movies?q=${encodeURIComponent(title)}`
-    : `${base}/search/tvshows?q=${encodeURIComponent(title)}`;
-  const steps: DiagnosticStep[] = [];
-  const search = await diagnosticFetch(searchUrl, `${type}-search`, headers, 15_000);
-  steps.push(search);
-  const searchPayload = search.payload as any;
-  const items = Array.isArray(searchPayload?.items)
-    ? searchPayload.items
-    : Array.isArray(searchPayload?.results)
-      ? searchPayload.results
-      : [];
-  const candidates = items.map((item: any) => ({
-    title: String(item.title ?? ''),
-    year: Number(item.year) || null,
-  }));
-  const index = findBestMatch(candidates, { title, year }, 40);
-  const matched = index >= 0 ? items[index] : null;
-  const subjectId = matched?.subjectId ?? matched?.id ?? null;
-  const result: Record<string, unknown> = {
-    provider: 'daratech',
-    type,
-    request: { title, year, ...(type === 'tv' ? { season, episode } : {}) },
-    search: {
-      candidate_count: items.length,
-      matched: Boolean(matched),
-      selected: matched ? {
-        subject_id: String(subjectId),
-        title: String(matched.title ?? ''),
-        year: Number(matched.year) || null,
-      } : null,
-    },
-    steps: [publicDiagnosticStep(search)],
-  };
-
-  if (!search.ok || !subjectId) {
-    result.outcome = search.ok ? 'no_match' : 'upstream_error';
-    return result;
-  }
-
-  const playbackUrl = type === 'movie'
-    ? `${base}/movies/${encodeURIComponent(String(subjectId))}/stream`
-    : `${base}/tvshows/${encodeURIComponent(String(subjectId))}/season/${season}/episode/${episode}/stream`;
-  const playback = await diagnosticFetch(playbackUrl, `${type}-playback`, headers, 20_000);
-  steps.push(playback);
-  result.outcome = playback.ok ? 'upstream_ok' : 'upstream_error';
-  result.steps = steps.map(publicDiagnosticStep);
-  return result;
 }
 
 function input(q: any): any {
@@ -385,7 +217,7 @@ app.addHook('onRequest', async (request, reply) => {
         action: 'Configure the diagnostic secret before retrying.',
       });
     }
-    if (!diagnosticAuth(request)) {
+    if (!diagnosticAuth(request, env.diagnosticSecret)) {
       return reply.code(401).send({
         code: 'UNAUTHORIZED',
         error: 'Diagnostic authentication required',
@@ -437,7 +269,11 @@ app.get('/diagnostics/:provider/:type', async (request, reply) => {
     });
   }
 
-  const diagnostic = await runDaratechDiagnostic(type, query);
+  const diagnostic = await runDaratechDiagnostic(type, query, {
+    diagnosticSecret: env.diagnosticSecret,
+    daratechBase: env.daratechBase,
+    daratechKey: env.daratechKey,
+  });
   return reply.send({
     diagnostic: true,
     generated_at: new Date().toISOString(),
