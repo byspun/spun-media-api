@@ -52,6 +52,10 @@ export function isAlreadyRelayedUrl(url: string, relayBase: string): boolean {
   try { return new URL(url).origin === new URL(relayBase).origin; } catch { return false; }
 }
 
+export function universalSlugify(value: unknown): string {
+  return normalizeTitle(value).replace(/\s+/g, '-').replace(/^-+|-+$/g, '') || 'untitled';
+}
+
 export function isSafeHttpUrl(value: unknown): value is string {
   try {
     const url = new URL(String(value));

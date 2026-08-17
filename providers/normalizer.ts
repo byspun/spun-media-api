@@ -1,4 +1,4 @@
-import { uniqueBy, isSafeHttpUrl, normalizeQuality } from './mapper.js';
+import { uniqueBy, isSafeHttpUrl, normalizeQuality, universalSlugify } from './mapper.js';
 const SUBTITLE_META = Symbol('provider-subtitles');
 type WithSubtitleMeta = { [SUBTITLE_META]?: RawSubtitle[] };
 
