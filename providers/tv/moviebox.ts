@@ -24,7 +24,18 @@ async function request(method: string, url: string, body: string | null = null):
   try { const response = await fetch(url, { method, headers, body: body ?? undefined, signal: AbortSignal.timeout(20_000) }); const user = response.headers.get('x-user'); if (user) { try { const next = JSON.parse(user).token; if (next) bearerToken = next; } catch {} } if (!response.ok) return null; return { data: await response.json(), headers: response.headers }; } catch { return null; }
 }
 function bestSubject(items: any[], input: TvProviderInput): any | null {
-  const wanted = normalizeTitle(input.title); const ranked = items.filter((item) => Number(item.subjectType ?? 2) === 2).map((item) => { const actual = normalizeTitle(item.title ?? ''); const year = Number(String(item.releaseDate ?? item.year ?? '').slice(0, 4)); let score = actual === wanted ? 50 : actual.includes(wanted) || wanted.includes(actual) ? 15 : 0; if (input.year && year === input.year) score += 35; return { item, score }; }).filter((value) => value.score >= 40).sort((a, b) => b.score - a.score); return ranked[0]?.item ?? null;
+  const wanted = normalizeTitle(input.title);
+  const seasonToken = `s${input.season}`;
+  const ranked = items.filter((item) => Number(item.subjectType ?? 2) === 2).map((item) => {
+    const actual = normalizeTitle(item.title ?? '');
+    const year = Number(String(item.releaseDate ?? item.year ?? '').slice(0, 4));
+    let score = actual === wanted ? 60 : actual.startsWith(wanted) ? 35 : actual.includes(wanted) || wanted.includes(actual) ? 20 : 0;
+    if (input.year && year === input.year) score += 35;
+    if (actual.includes(seasonToken)) score += 20;
+    if (/s\d+$/.test(actual) && !actual.includes(seasonToken)) score -= 15;
+    return { item, score };
+  }).filter((value) => value.score >= 30).sort((a, b) => b.score - a.score);
+  return ranked[0]?.item ?? null;
 }
 function subtitle(value: any): RawSubtitle | null { if (!isSafeHttpUrl(value?.url)) return null; return { url: value.url, language: String(value.language ?? value.lanName ?? value.lan ?? 'Unknown'), language_code: String(value.language_code ?? value.lang ?? value.lan ?? 'und').toLowerCase(), format: 'vtt', provider: 'moviebox' }; }
 async function getCaptions(subjectId: string, streamId: string): Promise<RawSubtitle[]> { const list: RawSubtitle[] = []; for (const path of [`get-stream-captions?subjectId=${encodeURIComponent(subjectId)}&streamId=${encodeURIComponent(streamId)}`, `get-ext-captions?subjectId=${encodeURIComponent(subjectId)}&resourceId=${encodeURIComponent(streamId)}&episode=${0}`]) { const res = await request('GET', `${API_BASE}/wefeed-mobile-bff/subject-api/${path}`); const values = res?.data?.data?.extCaptions; if (Array.isArray(values)) list.push(...values.map(subtitle).filter(Boolean) as RawSubtitle[]); } return uniqueBy(list, (item) => item.language_code); }
