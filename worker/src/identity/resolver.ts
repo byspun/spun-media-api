@@ -163,7 +163,7 @@ export async function getByKitsuId(
 
 export async function getByMovieboxId(
   env: Env,
-  movieboxId: number,
+  movieboxId: string,
   type?: 'movie' | 'tv' | 'anime',
 ): Promise<MediaTitleRow | null> {
   const cacheKey = `row:moviebox:${movieboxId}`;
@@ -187,7 +187,7 @@ export async function getByMovieboxId(
 export async function linkMovieboxId(
   env: Env,
   spunId: string,
-  movieboxId: number,
+  movieboxId: string,
 ): Promise<void> {
   const sql = getDb(env);
   await sql`
@@ -268,7 +268,7 @@ export async function getByImdbId(
 
 export async function resolveFromMoviebox(
   env: Env,
-  movieboxId: number,
+  movieboxId: string,
   type: 'movie' | 'tv' | 'anime',
   title: string,
   params: { year?: number | null; rating?: number | null; posterPath?: string | null } = {},

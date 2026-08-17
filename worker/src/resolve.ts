@@ -17,6 +17,7 @@ import {
   type TmdbTvDetail,
 } from './metadata/tmdb.js';
 import { getAnilistMedia, anilistTitle } from './metadata/anilist.js';
+import { getMovieboxInfoById } from './metadata/moviebox.js';
 import { getJikanAnimeDetail } from './metadata/jikan.js';
 import {
   getKitsuAnime,
@@ -32,6 +33,8 @@ import {
   getByMalId,
   getByTmdbId,
   getByTvdbId,
+  getByMovieboxId,
+  resolveFromMoviebox,
   resolveFromAnilist,
   resolveFromMal,
   resolveFromTmdb,
@@ -40,7 +43,7 @@ import {
 } from './identity/resolver.js';
 import { anilistToItem, tmdbResultToItem } from './normalizer.js';
 
-export type ResolveNamespace = 'tmdb' | 'imdb' | 'tvdb' | 'anilist' | 'mal' | 'kitsu';
+export type ResolveNamespace = 'tmdb' | 'imdb' | 'tvdb' | 'anilist' | 'mal' | 'kitsu' | 'moviebox';
 
 function storedSummaryItem(row: MediaTitleRow): ContentItem | null {
   if (!row.summary_synced_at) return null;
@@ -67,6 +70,7 @@ export const RESOLVE_NAMESPACES: ResolveNamespaceInfo[] = [
   { namespace: 'anilist', content_types: ['anime'], parameter: 'id' },
   { namespace: 'mal', content_types: ['anime'], parameter: 'id' },
   { namespace: 'kitsu', content_types: ['anime'], parameter: 'id' },
+  { namespace: 'moviebox', content_types: ['movie', 'tv'], parameter: 'id' },
 ];
 
 const RESOLVE_TIMEOUT_MS = 10_000;
@@ -84,7 +88,8 @@ export class ResolveFailure extends Error {
       | 'RESOLVE_METADATA_TIMEOUT'
       | 'RESOLVE_REGISTRATION_FAILED'
       | 'RESOLVE_CONFLICT'
-      | 'RESOLVE_UNSUPPORTED_RESULT',
+      | 'RESOLVE_UNSUPPORTED_RESULT'
+      | 'UNSUPPORTED_SUBJECT_TYPE',
     public readonly status: number,
   ) {
     super(code);
@@ -345,6 +350,44 @@ async function resolveKitsu(env: Env, id: number): Promise<ContentItem> {
   };
 }
 
+async function resolveMoviebox(
+  env: Env,
+  id: string,
+  requestedType?: 'movie' | 'tv',
+): Promise<ContentItem> {
+  const info = await withTimeout(getMovieboxInfoById(env, id));
+  if (!info) fail('RESOLVE_CONTENT_NOT_FOUND', 404);
+
+  const subjectType = Number(info.subjectType);
+  if (subjectType !== 1 && subjectType !== 2) {
+    fail('UNSUPPORTED_SUBJECT_TYPE', 422);
+  }
+
+  const type: 'movie' | 'tv' = subjectType === 1 ? 'movie' : 'tv';
+  if (requestedType && requestedType !== type) {
+    fail('RESOLVE_NAMESPACE_TYPE_MISMATCH', 400);
+  }
+
+  const title = info.title.trim();
+  if (!title) fail('RESOLVE_UNSUPPORTED_RESULT', 422);
+  const yearMatch = String(info.releaseDate ?? '').match(/(\d{4})/);
+  const year = yearMatch ? Number(yearMatch[1]) : null;
+  const row = await resolveFromMoviebox(env, id, type, title, {
+    year,
+    rating: typeof info.rating === 'number' ? Number(info.rating.toFixed(1)) : null,
+    posterPath: info.poster ?? null,
+  });
+
+  return {
+    spun_id: row.spun_id,
+    type,
+    title,
+    year: year ?? row.year ?? null,
+    rating: typeof info.rating === 'number' ? Number(info.rating.toFixed(1)) : row.rating ?? null,
+    poster: info.poster ?? row.poster_path ?? null,
+  };
+}
+
 async function resolveMal(env: Env, id: number): Promise<ContentItem> {
   const detail = await withTimeout(getJikanAnimeDetail(env, id));
   if (!detail) fail('RESOLVE_CONTENT_NOT_FOUND', 404);
@@ -412,6 +455,12 @@ async function resolveExisting(
     return storedSummaryItem(row) ?? resolveKitsu(env, Number(id));
   }
 
+  if (namespace === 'moviebox') {
+    const row = await getByMovieboxId(env, id, requestedType);
+    if (!row) return null;
+    return storedSummaryItem(row) ?? resolveMoviebox(env, id, requestedType);
+  }
+
   const row = await getByMalId(env, Number(id));
   if (!row) return null;
   return storedSummaryItem(row) ?? resolveMal(env, Number(id));
@@ -449,6 +498,7 @@ export async function resolveIdentifier(
     if (normalizedNamespace === 'tvdb') return resolveTmdbExternal(env, 'tvdb', id.trim());
     if (normalizedNamespace === 'anilist') return resolveAnilist(env, Number(id));
     if (normalizedNamespace === 'kitsu') return resolveKitsu(env, Number(id));
+    if (normalizedNamespace === 'moviebox') return resolveMoviebox(env, id.trim(), type);
     return resolveMal(env, Number(id));
   } catch (error) {
     if (error instanceof ResolveFailure) throw error;

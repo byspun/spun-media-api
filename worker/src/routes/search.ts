@@ -44,8 +44,8 @@ async function searchMoviebox(env: Env, keyword: string): Promise<MovieBoxSearch
 
 async function batchMovieboxItems(env: Env, items: MovieBoxSearchItem[], type: 'movie' | 'tv', canonicalTitles: Set<string>): Promise<ContentItem[]> {
   const rows = await Promise.all(items.slice(0, 20).map(async (item) => {
-    const movieboxId = Number(item.subjectId);
-    if (!Number.isSafeInteger(movieboxId) || movieboxId <= 0 || !item.title) return null;
+    const movieboxId = String(item.subjectId ?? '').trim();
+    if (!/^\d+$/.test(movieboxId) || !item.title) return null;
     const year = item.releaseDate ? Number(String(item.releaseDate).slice(0, 4)) || null : null;
     const row = await resolveFromMoviebox(env, movieboxId, type, item.title, {
       year,

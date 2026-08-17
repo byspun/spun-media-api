@@ -16,7 +16,7 @@ async function cipher(url: string, init?: RequestInit): Promise<string> { const 
 function decrypt(value: string, securityKey: string): any { const keyMaterial = CryptoJS.enc.Base64.parse(securityKey).concat(CryptoJS.enc.Utf8.parse('T!BgJB')); const key = CryptoJS.lib.WordArray.create(keyMaterial.words.slice(0, 4), 16); const plain = CryptoJS.AES.decrypt(value, key, { iv: key, mode: CryptoJS.mode.CBC, padding: CryptoJS.pad.Pkcs7 }).toString(CryptoJS.enc.Utf8); return JSON.parse(plain); }
 function data(value: any): any { return value?.data && typeof value.data === 'object' ? value.data : value ?? {}; }
 function q(value: unknown): any { const text = String(value ?? ''); return text.includes('2160') || text.includes('4K') ? '4k' : normalizeQuality(text); }
-function sub(value: any): RawSubtitle | null { if (!isSafeHttpUrl(value?.url)) return null; return { url: value.url, language: String(value.abbreviate ?? value.title ?? 'Unknown'), language_code: String(value.abbreviate ?? 'und').toLowerCase(), format: 'srt', provider: 'castle' }; }
+function sub(value: any): RawSubtitle | null { if (!isSafeHttpUrl(value?.url)) return null; return { url: value.url, language: String(value.abbreviate ?? value.title ?? 'Unknown'), language_code: String(value.abbreviate ?? 'und').toLowerCase(), format: 'vtt', provider: 'castle' }; }
 
 export async function getCastleStreams(input: MovieProviderInput, tmdbApiKey: string): Promise<RawStream[]> {
   try {

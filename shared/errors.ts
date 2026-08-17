@@ -58,6 +58,7 @@ export type SpunErrorCode =
   | 'RESOLVE_REGISTRATION_FAILED'
   | 'RESOLVE_CONFLICT'
   | 'RESOLVE_UNSUPPORTED_RESULT'
+  | 'UNSUPPORTED_SUBJECT_TYPE'
   | 'INTERNAL_ERROR';
 
 export interface SpunErrorDetail {
@@ -322,6 +323,11 @@ export const ERROR_REGISTRY: Record<SpunErrorCode, Omit<SpunErrorDetail, 'code'>
     error:       'Unsupported metadata result',
     description: 'The resolved title could not be normalized into a supported Spün content model.',
     action:      'Try another identifier or namespace.'
+  },
+  UNSUPPORTED_SUBJECT_TYPE: {
+    error:       'Unsupported subject type',
+    description: 'Only movie and TV subjects are supported by the Spün Media API.',
+    action:      'Use subject type 1 for movies or 2 for TV content.'
   },
   INTERNAL_ERROR: {
     error:       'Unexpected error',

@@ -13,6 +13,7 @@ export interface SubtitleProxyTokenPayload {
   language_code: string;
   format: 'vtt' | 'srt';
   disposition: 'inline' | 'attachment';
+  headers?: Record<string, string>;
   expires_at: number;
 }
 
@@ -85,9 +86,10 @@ async function decryptPayload(secret: string, token: string, now: number): Promi
   }
 }
 
-export async function createSubtitleProxyToken(secret: string, archiveUrl: string, languageCode: string, mode: { format?: 'vtt' | 'srt'; disposition?: 'inline' | 'attachment' } = {}, now = Date.now()): Promise<{ token: string; expiresAt: string }> {
+export async function createSubtitleProxyToken(secret: string, archiveUrl: string, languageCode: string, mode: { format?: 'vtt' | 'srt'; disposition?: 'inline' | 'attachment'; headers?: Record<string, string> } = {}, now = Date.now()): Promise<{ token: string; expiresAt: string }> {
   const expiresAt = now + SUBTITLE_PROXY_TOKEN_TTL_SECONDS * 1000;
-  const token = await encryptPayload({ v: 1, kind: 'subtitle', archive_url: archiveUrl, language_code: languageCode, format: mode.format ?? 'vtt', disposition: mode.disposition ?? 'inline', expires_at: expiresAt }, secret);
+  const headers = Object.fromEntries(Object.entries(mode.headers ?? {}).filter(([key, value]) => key.length < 80 && value.length < 2000));
+  const token = await encryptPayload({ v: 1, kind: 'subtitle', archive_url: archiveUrl, language_code: languageCode, format: mode.format ?? 'vtt', disposition: mode.disposition ?? 'inline', headers, expires_at: expiresAt }, secret);
   return { token, expiresAt: new Date(expiresAt).toISOString() };
 }
 

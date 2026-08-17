@@ -15,6 +15,7 @@ export interface RawSubtitle {
   language_code: string;
   format: 'vtt' | 'srt';
   provider: ProviderId | 'subtitle-catalog' | 'daratech-subtitles';
+  headers?: Record<string, string>;
 }
 
 export interface RawStream {
@@ -47,6 +48,7 @@ export interface ProviderResult {
 export interface MovieProviderInput {
   tmdb_id: number;
   imdb_id: string | null;
+  moviebox_id?: string | null;
   title: string;
   year: number | null;
 }
@@ -54,6 +56,7 @@ export interface MovieProviderInput {
 export interface TvProviderInput {
   tmdb_id: number;
   imdb_id: string | null;
+  moviebox_id?: string | null;
   title: string;
   year: number | null;
   season: number;

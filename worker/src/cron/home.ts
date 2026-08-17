@@ -57,7 +57,7 @@ async function madeInNaijaRow(env: Env): Promise<HomeRow> {
   const empty: HomeRow = { id: 'made-in-naija', title: 'Made in Naija', items: [] };
   try {
     const items = (await getMadeInNaija(env)).slice(0, ROW_MAX);
-    const rows = await Promise.all(items.map((item) => resolveFromMoviebox(env, Number(item.subjectId), 'movie', item.title, { year: item.releaseDate ? Number(String(item.releaseDate).slice(0, 4)) || null : null, rating: item.rating ?? null, posterPath: item.poster ?? null })));
+    const rows = await Promise.all(items.map((item) => resolveFromMoviebox(env, String(item.subjectId), 'movie', item.title, { year: item.releaseDate ? Number(String(item.releaseDate).slice(0, 4)) || null : null, rating: item.rating ?? null, posterPath: item.poster ?? null })));
     return { id: 'made-in-naija', title: 'Made in Naija', items: rows.filter(Boolean).map((row) => ({ spun_id: row!.spun_id, type: 'movie' as const, title: row!.title, year: row!.year, rating: row!.rating, poster: row!.poster_path })) };
   } catch { return empty; }
 }

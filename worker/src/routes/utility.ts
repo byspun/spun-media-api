@@ -53,7 +53,7 @@ utility.get('/health', async (c) => {
 
     const baseUrl = c.env.PROXY_BASE_URL.replace(/\/$/, '');
 
-    const [tmdbRes, anilistRes, jikanRes, kitsuRes, renderRes, providerStatus] = await Promise.all([
+    const [tmdbRes, anilistRes, jikanRes, kitsuRes, movieboxRes, renderRes, providerStatus] = await Promise.all([
       fetch('https://api.themoviedb.org/3/configuration', {
         headers: { Authorization: `Bearer ${c.env.TMDB_BEARER_TOKEN}` },
       }).catch(() => null),
@@ -74,6 +74,12 @@ utility.get('/health', async (c) => {
       fetch('https://kitsu.io/api/edge/anime/1', {
         headers: { Accept: 'application/vnd.api+json' },
       }).catch(() => null),
+
+      c.env.MOVIEBOX_API_BASE
+        ? fetch(`${c.env.MOVIEBOX_API_BASE.replace(/\/$/, '')}/health`, {
+            headers: { 'X-Worker-Secret': c.env.MOVIEBOX_API_SECRET ?? '' },
+          }).catch(() => null)
+        : Promise.resolve(null),
 
       c.env.RENDER_BACKEND_URL
         ? fetch(`${c.env.RENDER_BACKEND_URL.replace(/\/$/, '')}/health`, {
@@ -107,10 +113,11 @@ utility.get('/health', async (c) => {
     const anilistOk = anilistRes?.ok ?? false;
     const jikanOk   = jikanRes?.ok ?? false;
     const kitsuOk   = kitsuRes?.ok ?? false;
+    const movieboxOk = movieboxRes?.ok ?? false;
     const renderOk  = renderRes?.ok ?? false;
     const providersOk = renderOk && providerStatus !== 'down';
 
-    const allOk = tmdbOk && anilistOk && jikanOk && kitsuOk && providersOk;
+    const allOk = tmdbOk && anilistOk && jikanOk && kitsuOk && movieboxOk && providersOk;
     const overallStatus = allOk ? 'ok' : 'degraded';
 
     const payload = {
@@ -120,6 +127,7 @@ utility.get('/health', async (c) => {
         anilist:   anilistOk ? 'ok' : 'down',
         jikan:     jikanOk   ? 'ok' : 'down',
         kitsu:     kitsuOk   ? 'ok' : 'down',
+        moviebox:  movieboxOk ? 'ok' : 'down',
         providers: providersOk ? providerStatus : 'down',
       },
     };
@@ -130,7 +138,7 @@ utility.get('/health', async (c) => {
     console.error('[Health] Error:', err);
     return jsonResponse({
       status: 'degraded',
-      services: { tmdb: 'down', anilist: 'down', jikan: 'down', kitsu: 'down', providers: 'down' },
+      services: { tmdb: 'down', anilist: 'down', jikan: 'down', kitsu: 'down', moviebox: 'down', providers: 'down' },
     });
   }
 });
