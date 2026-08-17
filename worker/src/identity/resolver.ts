@@ -171,12 +171,18 @@ export async function getByMovieboxId(
   if (cached && (!type || cached.content_type === type)) return cached;
 
   const sql = getDb(env);
-  const rows = await sql`
-    SELECT * FROM media_titles
-    WHERE moviebox_id = ${movieboxId}
-      ${type ? sql`AND content_type = ${type}` : sql``}
-    LIMIT 1
-  `;
+  const rows = type
+    ? await sql`
+        SELECT * FROM media_titles
+        WHERE moviebox_id = ${movieboxId}
+          AND content_type = ${type}
+        LIMIT 1
+      `
+    : await sql`
+        SELECT * FROM media_titles
+        WHERE moviebox_id = ${movieboxId}
+        LIMIT 1
+      `;
   if (!rows.length) return null;
 
   const row = rows[0] as MediaTitleRow;
