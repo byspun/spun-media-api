@@ -34,8 +34,8 @@ async function signedRequest(method: string, url: string, body: string | null = 
     const response = await fetch(url, { method, headers, body: body ?? undefined, signal: AbortSignal.timeout(20_000) });
     const xUser = response.headers.get('x-user');
     if (xUser) { try { const next = JSON.parse(xUser).token; if (tokenValid(next)) bearerToken = next; } catch {} }
-    if (!response.ok) return null;
-    let data: any; try { data = await response.json(); } catch { return null; }
+    if (!response.ok) { console.warn('[moviebox-upstream-status]', { status: response.status, path: new URL(url).pathname }); return null; }
+    let data: any; try { data = await response.json(); } catch { console.warn('[moviebox-upstream-json]', { path: new URL(url).pathname }); return null; }
     return { data, headers: response.headers };
   } catch { return null; }
 }
@@ -74,8 +74,9 @@ export async function getMovieboxStreams(input: MovieProviderInput, _tmdbApiKey:
   const search = await signedRequest('POST', `${API_BASE}/wefeed-mobile-bff/subject-api/search/v2`, JSON.stringify({ page: 1, perPage: 20, keyword: input.title }));
   const groups = Array.isArray(search?.data?.data?.results) ? search.data.data.results : [];
   const subjects = groups.flatMap((group: any) => Array.isArray(group.subjects) ? group.subjects : []);
+  console.log('[moviebox-search-result]', { title: input.title, groups: groups.length, subjects: subjects.length });
   const chosen = pickSubject(subjects, input);
-  if (!chosen) return [];
+  if (!chosen) { console.warn('[moviebox-subject-not-found]', { title: input.title, year: input.year ?? null }); return []; }
   const detail = await signedRequest('GET', `${API_BASE}/wefeed-mobile-bff/subject-api/get?subjectId=${encodeURIComponent(String(chosen.subjectId))}`);
   const dubs = Array.isArray(detail?.data?.data?.dubs) ? detail.data.data.dubs : [];
   const subjectIds = [{ id: String(chosen.subjectId), lang: String(chosen.lanName ?? 'Original') }, ...dubs.filter((item: any) => String(item.subjectId) !== String(chosen.subjectId)).map((item: any) => ({ id: String(item.subjectId), lang: String(item.lanName ?? 'Original') }))];
@@ -83,6 +84,7 @@ export async function getMovieboxStreams(input: MovieProviderInput, _tmdbApiKey:
   for (const item of subjectIds) {
     const result = await signedRequest('GET', `${API_BASE}/wefeed-mobile-bff/subject-api/play-info?subjectId=${encodeURIComponent(item.id)}&se=0&ep=0`);
     const values = Array.isArray(result?.data?.data?.streams) ? result.data.data.streams : [];
+    console.log('[moviebox-playback-result]', { subject: item.id, season: 0, episode: 0, streams: values.length });
     for (const value of values) {
       if (!isSafeHttpUrl(value.url)) continue;
       const streamId = String(value.id ?? `${item.id}|0|0`);
