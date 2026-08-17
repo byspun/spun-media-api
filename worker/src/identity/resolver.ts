@@ -173,7 +173,7 @@ export async function getByMovieboxId(
   const sql = getDb(env);
   const rows = await sql`
     SELECT * FROM media_titles
-    WHERE moviebox_id = ${movieboxId}
+    WHERE moviebox_id = ${movieboxId}::bigint
       ${type ? sql`AND content_type = ${type}` : sql``}
     LIMIT 1
   `;
@@ -192,7 +192,7 @@ export async function linkMovieboxId(
   const sql = getDb(env);
   await sql`
     UPDATE media_titles
-    SET moviebox_id = ${movieboxId}
+    SET moviebox_id = ${movieboxId}::bigint
     WHERE spun_id = ${spunId} AND moviebox_id IS NULL
   `;
   await Promise.all([
@@ -291,7 +291,7 @@ export async function resolveFromMoviebox(
   if (candidates.length === 1) {
     const updated = await sql`
       UPDATE media_titles
-      SET moviebox_id = ${movieboxId},
+      SET moviebox_id = ${movieboxId}::bigint,
           year = COALESCE(year, ${params.year ?? null}),
           rating = COALESCE(rating, ${params.rating ?? null}),
           poster_path = COALESCE(poster_path, ${params.posterPath ?? null})
@@ -313,7 +313,7 @@ export async function resolveFromMoviebox(
       spun_id, slug, content_type, title, moviebox_id,
       year, rating, poster_path, summary_synced_at
     ) VALUES (
-      ${spunId}, ${slug}, ${type}, ${title}, ${movieboxId},
+      ${spunId}, ${slug}, ${type}, ${title}, ${movieboxId}::bigint,
       ${params.year ?? null}, ${params.rating ?? null}, ${params.posterPath ?? null}, NOW()
     )
     ON CONFLICT (spun_id) DO UPDATE

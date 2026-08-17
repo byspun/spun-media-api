@@ -27,6 +27,7 @@ const ALLOWED_SUBTITLE_HOSTS = [
   'vidwish.live',
   'megacloud.bloggy.click',
   'megacloud.tv',
+  'fodcyy.com',
 ];
 
 function isAllowedSubtitleUrl(rawUrl: string): boolean {
