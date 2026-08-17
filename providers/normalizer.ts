@@ -65,7 +65,8 @@ export function buildStreamResponse(
   streams: RawStream[],
   subtitles: RawSubtitle[],
 ): PublicStreamResponse {
-  return { spun_id: spunId, title, type, streams: normalizeStreams(streams), subtitles: mergeSubtitles(subtitles) };
+  const finalId = spunId && spunId !== 'undefined' ? spunId : universalSlugify(title);
+  return { spun_id: finalId, title, type, streams: normalizeStreams(streams), subtitles: mergeSubtitles(subtitles) };
 }
 
 export function buildDownloadResponse(
@@ -76,6 +77,7 @@ export function buildDownloadResponse(
   subtitles: RawSubtitle[],
   batch: boolean,
 ): PublicDownloadResponse {
+  const finalId = spunId && spunId !== 'undefined' ? spunId : universalSlugify(title);
   const grouped = new Map<string, RawDownload[]>();
   for (const item of downloads) {
     const id = `${item.season ?? 0}:${item.episode ?? 0}`;
@@ -94,7 +96,7 @@ export function buildDownloadResponse(
     .filter((group) => group.options.length);
 
   return {
-    spun_id: spunId,
+    spun_id: finalId,
     title,
     type,
     downloads: batch && type !== 'movie' && groupedOutput.length ? groupedOutput : flat,
