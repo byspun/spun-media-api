@@ -285,7 +285,7 @@ export async function resolveFromMoviebox(
     SELECT * FROM media_titles
     WHERE content_type = ${type}
       AND LOWER(title) = LOWER(${title})
-      AND (${params.year ?? null}::int IS NULL OR year IS NULL OR ABS(year - ${params.year ?? null}) <= 1)
+      AND (${params.year ?? null}::int IS NULL OR year IS NULL OR ABS(year - ${params.year ?? null}::int) <= 1)
     LIMIT 2
   ` as MediaTitleRow[];
   if (candidates.length === 1) {
