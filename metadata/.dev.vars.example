@@ -1,0 +1,17 @@
+# metadata/.dev.vars.example
+# Copy to .dev.vars — wrangler reads this for local `wrangler dev` runs.
+# Never commit .dev.vars.
+
+TMDB_API_KEY=
+TMDB_BEARER_TOKEN=
+NEON_DATABASE_URL=
+RENDER_BACKEND_URL=
+MOVIEBOX_API_BASE=https://moviebox.byspun.xyz
+MOVIEBOX_API_SECRET=
+X_SPUN_SECRET=
+SUBDL_API_KEY=
+SUBTITLE_PROXY_TOKEN_SECRET=
+STREAM_PROXY_TOKEN_SECRET=
+TASTEDIVE_API_KEY=
+PROXY_BASE_URL=https://spun-anilist-proxy.vercel.app
+SPUN_PROXY_SECRET=

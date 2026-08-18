@@ -3,14 +3,14 @@
   "version": "1.0.0",
   "private": true,
   "workspaces": [
-    "worker",
+    "metadata",
     "providers"
   ],
   "scripts": {
-    "dev:worker":    "cd worker && npm run dev",
+    "dev:metadata":  "cd metadata && npm run dev",
     "dev:providers": "cd providers && npm run dev",
-    "deploy:worker": "cd worker && npm run deploy",
-    "type-check":    "cd worker && npm run type-check && cd ../providers && npm run type-check",
-    "install:all":   "npm install && cd worker && npm install && cd ../providers && npm install"
+    "deploy:metadata": "cd metadata && npm run deploy",
+    "type-check":    "cd metadata && npm run type-check && cd ../providers && npm run type-check",
+    "install:all":   "npm install && cd metadata && npm install && cd ../providers && npm install"
   }
 }
