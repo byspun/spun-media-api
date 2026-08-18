@@ -160,10 +160,6 @@ v1.get('/resolve/:namespace', (c) => {
   return c.redirect(`/v1/utility/resolve/${namespace}${qs}`, 307);
 });
 v1.get('/health', (c) => c.redirect('/v1/utility/health', 307));
-v1.get('/proxy',  (c) => {
-  const qs = c.req.url.includes('?') ? '?' + c.req.url.split('?')[1] : '';
-  return c.redirect(`/v1/utility/proxy${qs}`, 307);
-});
 
 // Trending/popular/new/genres/studios flat aliases inside /v1
 v1.get('/trending', (c) => {

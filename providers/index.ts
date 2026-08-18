@@ -21,7 +21,8 @@ import { getAnimedunyaStreams } from './anime/animedunya.js';
 import { getAninekoStreams } from './anime/anineko.js';
 import { getAnidbappStreams } from './anime/anidbapp.js';
 import { getAnibdStreams } from './anime/anibd.js';
-import { getMovieboxApiMovieStreams, getMovieboxApiTvStreams } from './shared/moviebox-api-stream.js';
+import { getMovieboxStreams as getMovieboxMovieStreams } from './movies/moviebox.js';
+import { getMovieboxStreams as getMovieboxTvStreams } from './tv/moviebox.js';
 import { attachedSubtitles, buildDownloadResponse, buildStreamResponse } from './normalizer.js';
 import { recordFailure, recordSuccess, isHealthy, getHealthRecords } from './health.js';
 import type { AnimeProviderInput, MovieProviderInput, ProviderId, RawDownload, RawStream, TvProviderInput } from './shared/types.js';
@@ -98,14 +99,14 @@ function input(q: any): any {
 }
 
 function movieboxMovieAttempt(value: MovieProviderInput) {
-  return getMovieboxApiMovieStreams(value, {
+  return getMovieboxMovieStreams(value, {
     baseUrl: env.movieboxBase,
     secret: env.movieboxSecret,
   });
 }
 
 function movieboxTvAttempt(value: TvProviderInput) {
-  return getMovieboxApiTvStreams(value, {
+  return getMovieboxTvStreams(value, {
     baseUrl: env.movieboxBase,
     secret: env.movieboxSecret,
   });

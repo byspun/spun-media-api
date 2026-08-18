@@ -3,7 +3,6 @@
 //   GET /resolve                         — list supported identifier namespaces
 //   GET /resolve/:namespace?id=           — resolve and register an identifier
 //   GET /health
-//   GET /proxy?url=              — HLS/M3U8 proxy (delegated to proxy.ts)
 
 import { Hono } from 'hono';
 import type { Env } from '../types/env.js';
@@ -15,7 +14,6 @@ import {
 import { getDb } from '../db.js';
 import { kvGet, kvSet, CacheKeys, TTL } from '../cache.js';
 import { jsonResponse, errorResponse } from '../normalizer.js';
-import { proxyHls } from '../proxy.js';
 
 const utility = new Hono<{ Bindings: Env }>();
 
@@ -143,12 +141,5 @@ utility.get('/health', async (c) => {
   }
 });
 
-// ─── GET /proxy ───────────────────────────────────────────────────────────────
-// HLS stream proxy — rewrites M3U8 manifests and proxies segments.
-// All stream URL rewriting happens in proxy.ts.
-
-utility.get('/proxy', async (c) => {
-  return proxyHls(c.req.raw, c.env);
-});
 
 export default utility;
