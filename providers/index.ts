@@ -26,9 +26,10 @@ import { getMovieboxStreams as getMovieboxTvStreams } from './tv/moviebox.js';
 import { attachedSubtitles, buildDownloadResponse, buildStreamResponse } from './normalizer.js';
 import { recordFailure, recordSuccess, isHealthy, getHealthRecords } from './health.js';
 import type { AnimeProviderInput, MovieProviderInput, ProviderId, RawDownload, RawStream, TvProviderInput } from './shared/types.js';
-import { diagnosticAuth, runDaratechDiagnostic } from './diagnostics.js';
+import { runDaratechDiagnostic } from './diagnostics.js';
+import { providerLogger, startProviderLogArchiver, flushProviderLogs } from './logging.js';
 
-const app = Fastify({ logger: true, trustProxy: true });
+const app = Fastify({ logger: false, trustProxy: true });
 
 function safeProviderError(error: unknown): string {
   return String(error instanceof Error ? error.message : error ?? 'unknown failure')
@@ -44,15 +45,16 @@ const env = {
   daratechKey: process.env.DARATECH_API_KEY ?? '',
   tmdbKey: process.env.TMDB_API_KEY ?? '',
   diagnosticSecret: process.env.PROVIDER_DIAGNOSTIC_SECRET ?? '',
+  adminKey: process.env.ADMIN_KEY ?? process.env.PROVIDER_DIAGNOSTIC_SECRET ?? '',
 };
 
-app.log.info({
+providerLogger.info('startup', 'Streaming configuration loaded', {
   tmdbConfigured: Boolean(env.tmdbKey),
   movieboxSecretConfigured: Boolean(env.movieboxSecret),
   xSpunSecretConfigured: Boolean(env.secret),
   daratechConfigured: Boolean(env.daratechKey),
-  diagnosticSecretConfigured: Boolean(env.diagnosticSecret),
-}, 'streaming configuration loaded');
+  adminKeyConfigured: Boolean(env.adminKey),
+});
 
 function auth(request: any): boolean {
   return Boolean(env.secret) && request.headers['x-spun-secret'] === env.secret;
@@ -153,7 +155,7 @@ async function streamFor(value: any): Promise<{ streams: RawStream[]; subtitles:
 
   for (const [id, fn] of attempts) {
     if (!isHealthy(id, value.type)) {
-      app.log.debug({ provider: id, category: value.type }, 'provider suppressed by health tracker');
+      providerLogger.debug(id, `Provider suppressed by health tracker category=${value.type}`);
       continue;
     }
 
@@ -161,21 +163,21 @@ async function streamFor(value: any): Promise<{ streams: RawStream[]; subtitles:
       const result = await fn(value);
       if (result.length) {
         recordSuccess(id, value.type);
-        app.log.info({ provider: id, category: value.type, count: result.length }, 'provider returned playable streams');
+        providerLogger.info(id, `Provider returned playable streams category=${value.type} count=${result.length}`);
         streams.push(...result);
         subtitles = attachedSubtitles(result);
         break;
       }
       recordFailure(id, value.type, 'no usable result');
-      app.log.warn({ provider: id, category: value.type }, 'provider returned no usable streams');
+      providerLogger.warn(id, `Provider returned no usable streams category=${value.type}`);
     } catch (error) {
       recordFailure(id, value.type, error);
-      app.log.error({ provider: id, category: value.type, error: safeProviderError(error) }, 'provider stream request failed');
+      providerLogger.error(id, `Provider stream request failed category=${value.type}: ${safeProviderError(error)}`);
     }
   }
 
   if (!streams.length) {
-    app.log.error({ category: value.type, attempted: attempts.map(([id]) => id) }, 'all stream providers exhausted');
+    providerLogger.error('fallback', `All stream providers exhausted category=${value.type} attempted=${attempts.map(([id]) => id).join(',')}`);
   }
 
   return { streams, subtitles };
@@ -189,41 +191,46 @@ async function downloadsFor(value: any): Promise<{ downloads: RawDownload[]; sub
   ];
   if (value.type === 'movie') providers.splice(2, 0, ['dvdplay', (x: any) => getDvdplayDownloads(x, env.tmdbKey)]);
 
-  for (const [, fn] of providers) {
+  for (const [id, fn] of providers) {
     try {
       const result = await fn(value);
-      if (result.length) return { downloads: result, subtitles: [] };
-    } catch {
-      // Fallback continues silently; public responses remain provider-neutral.
+      if (result.length) {
+        providerLogger.info(id, `Provider returned downloadable files category=${value.type} count=${result.length}`);
+        return { downloads: result, subtitles: [] };
+      }
+      providerLogger.warn(id, `Provider returned no downloadable files category=${value.type}`);
+    } catch (error) {
+      providerLogger.error(id, `Provider download request failed category=${value.type}: ${safeProviderError(error)}`);
     }
   }
+  providerLogger.error('fallback', `All download providers exhausted category=${value.type}`);
   return { downloads: [], subtitles: [] };
 }
 
 await app.register(cors, {
   origin: ['https://media.byspun.xyz', 'https://torii.byspun.xyz'],
   methods: ['GET', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'X-Spun-Secret', 'X-Diagnostic-Secret'],
+  allowedHeaders: ['Content-Type', 'X-Spun-Secret', 'X-Admin-Key', 'X-Log-Upload-Key'],
 });
 
 app.addHook('onRequest', async (request, reply) => {
   const requestPath = new URL(request.url, 'http://provider.local').pathname;
   if (requestPath === '/health') return;
-  if (requestPath.startsWith('/diagnostics/')) {
-    if (!env.diagnosticSecret) {
+  if (requestPath.startsWith('/admin/')) {
+    if (!env.adminKey) {
       return reply.code(503).send({
-        code: 'DIAGNOSTICS_DISABLED',
-        error: 'Diagnostics disabled',
-        description: 'The provider diagnostic endpoint has not been enabled on this Render service.',
-        action: 'Configure the diagnostic secret before retrying.',
+        code: 'ADMIN_DISABLED',
+        error: 'Administration disabled',
+        description: 'The provider administration surface has not been enabled on this Render service.',
+        action: 'Configure the administrator key before retrying.',
       });
     }
-    if (!diagnosticAuth(request, env.diagnosticSecret)) {
+    if (request.headers['x-admin-key'] !== env.adminKey) {
       return reply.code(401).send({
         code: 'UNAUTHORIZED',
-        error: 'Diagnostic authentication required',
-        description: 'This internal diagnostic request was not authenticated.',
-        action: 'Send the X-Diagnostic-Secret header configured for the Render service.',
+        error: 'Administrator authentication required',
+        description: 'This management request was not authenticated.',
+        action: 'Send the X-Admin-Key header configured for the Render service.',
       });
     }
     return;
@@ -238,7 +245,7 @@ app.addHook('onRequest', async (request, reply) => {
   }
 });
 
-app.get('/diagnostics/:provider/:type', async (request, reply) => {
+app.get('/admin/diagnostics/:provider/:type', async (request, reply) => {
   const params: any = request.params;
   const query: any = request.query;
   const provider = String(params.provider ?? '').toLowerCase();
@@ -280,6 +287,11 @@ app.get('/diagnostics/:provider/:type', async (request, reply) => {
     generated_at: new Date().toISOString(),
     ...diagnostic,
   });
+});
+
+app.addHook('onResponse', async (request, reply) => {
+  const requestPath = request.url.split('?')[0];
+  providerLogger.info('request', `${request.method} ${requestPath} status=${reply.statusCode}`);
 });
 
 app.get('/health', async () => {
@@ -342,6 +354,12 @@ app.get('/download', async (request, reply) => {
   return reply.send(buildDownloadResponse(String(q.spun_id), value.title, value.type, result.downloads, result.subtitles, batch));
 });
 
+app.post('/admin/logs/flush', async (_request, reply) => {
+  const result = await flushProviderLogs();
+  providerLogger.info('logs', `Provider logs flushed date=${result.date} uploaded=${result.uploaded}`);
+  return reply.send({ success: true, ...result, message: 'Current provider log flushed and archived.' });
+});
+
 app.setErrorHandler((_error, _request, reply) => reply.code(500).send({
   code: 'INTERNAL_ERROR',
   error: 'Unexpected error',
@@ -349,4 +367,16 @@ app.setErrorHandler((_error, _request, reply) => reply.code(500).send({
   action: 'Please try again later.',
 }));
 
+startProviderLogArchiver();
+
+process.on('SIGTERM', async () => {
+  await flushProviderLogs();
+  process.exit(0);
+});
+process.on('SIGINT', async () => {
+  await flushProviderLogs();
+  process.exit(0);
+});
+
 await app.listen({ port: Number(process.env.PORT ?? 10000), host: '0.0.0.0' });
+providerLogger.info('startup', `Provider service listening on port ${process.env.PORT ?? 10000}`);

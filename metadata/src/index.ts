@@ -6,14 +6,13 @@ import { Hono }   from 'hono';
 import { cors }   from 'hono/cors';
 import type { Env } from './types/env.js';
 import { errorResponse } from './normalizer.js';
+import { metadataLogger } from './logger.js';
 import {
   buildAndCacheGeneralHome,
   buildAndCacheMovieHome,
   buildAndCacheTvHome,
   buildAndCacheAnimeHome,
 } from './cron/home.js';
-import { backfillTitleSummaries } from './cron/summary-backfill.js';
-import { bumpCacheVersion } from './cache.js';
 
 import searchRoute    from './routes/search.js';
 import infoRoute      from './routes/info.js';
@@ -27,6 +26,7 @@ import subtitlesRoute from './routes/subtitles.js';
 import proxyRoute     from './routes/proxy.js';
 import utilityRoute   from './routes/utility.js';
 import franchiseRoute from './routes/franchise.js';
+import adminRoute    from './routes/admin.js';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -35,7 +35,7 @@ const app = new Hono<{ Bindings: Env }>();
 app.use('*', cors({
   origin:          '*',
   allowMethods:    ['GET', 'POST', 'OPTIONS'],
-  allowHeaders:    ['Content-Type', 'Authorization', 'X-Spun-Secret'],
+  allowHeaders:    ['Content-Type', 'Authorization', 'X-Spun-Secret', 'X-Admin-Key', 'X-Log-Upload-Key'],
   exposeHeaders:   ['X-Cache', 'X-Response-Time'],
   maxAge:          86400,
 }));
@@ -45,17 +45,9 @@ app.use('*', cors({
 app.use('*', async (c, next) => {
   const start = Date.now();
   await next();
-  c.res.headers.set('X-Response-Time', `${Date.now() - start}ms`);
-});
-
-// ─── Internal auth — Render → Worker callbacks ────────────────────────────────
-
-app.use('/v1/internal/*', async (c, next) => {
-  const secret = c.req.header('X-Spun-Secret');
-  if (!secret || secret !== c.env.X_SPUN_SECRET) {
-    return errorResponse('UNAUTHORIZED', 'Unauthorized', 401);
-  }
-  await next();
+  const duration = Date.now() - start;
+  c.res.headers.set('X-Response-Time', `${duration}ms`);
+  metadataLogger(c.env, c.executionCtx).info('request', `${c.req.method} ${c.req.path} status=${c.res.status} duration_ms=${duration}`);
 });
 
 // ─── /v1 routes ───────────────────────────────────────────────────────────────
@@ -72,80 +64,8 @@ v1.route('/download',   downloadRoute);
 v1.route('/subtitles',  subtitlesRoute);
 v1.route('/proxy',      proxyRoute);
 v1.route('/utility',    utilityRoute);
-v1.route('/franchise',  franchiseRoute);
-
-// ─── Home Build — Triggers homepage snapshot ──────────────────────────────────
-
-v1.get('/home/build', async (c) => {
-  const secret = c.req.header('X-Spun-Secret');
-  if (!secret || secret !== c.env.X_SPUN_SECRET) {
-    return errorResponse('UNAUTHORIZED', 'Unauthorized', 401);
-  }
-
-  const type = c.req.query('type') || 'all';
-  const wait = c.req.query('wait') === 'true';
-  
-  const buildPromise = (async () => {
-    switch (type) {
-      case 'movie': return buildAndCacheMovieHome(c.env);
-      case 'tv':    return buildAndCacheTvHome(c.env);
-      case 'anime': return buildAndCacheAnimeHome(c.env);
-      case 'all':
-      default:      return buildAndCacheGeneralHome(c.env);
-    }
-  })();
-
-  if (wait) {
-    try {
-      await buildPromise;
-      return c.json({
-        success: true,
-        message: `Homepage build completed for type: ${type}.`,
-        type
-      });
-    } catch (err) {
-      return errorResponse('INTERNAL_ERROR', `Homepage build failed for type: ${type}.`, 500);
-    }
-  }
-
-  c.executionCtx.waitUntil(buildPromise);
-
-  return c.json({ 
-    success: true, 
-    message: `Homepage build triggered for type: ${type}. It will run in the background. Estimated completion: 15-30 seconds.`,
-    status_url: `/v1/home/status`,
-    type
-  });
-});
-
-// ─── Summary Backfill — Populate compact card metadata in bounded batches ──────
-
-v1.post('/home/backfill', async (c) => {
-  const secret = c.req.header('X-Spun-Secret');
-  if (!secret || secret !== c.env.X_SPUN_SECRET) {
-    return errorResponse('UNAUTHORIZED', 'Unauthorized', 401);
-  }
-
-  const requested = Number(c.req.query('limit') ?? '5');
-  const result = await backfillTitleSummaries(c.env, Number.isFinite(requested) ? requested : 5);
-  return c.json({ success: true, ...result });
-});
-
-// ─── Cache Clear — Force clears cache everywhere ──────────────────────────────
-
-v1.get('/cache/clear', async (c) => {
-  const secret = c.req.header('X-Spun-Secret');
-  if (!secret || secret !== c.env.X_SPUN_SECRET) {
-    return errorResponse('UNAUTHORIZED', 'Unauthorized', 401);
-  }
-
-  const nextVersion = await bumpCacheVersion(c.env);
-
-  return c.json({ 
-    success: true, 
-    message: `Cache cleared successfully. New version: ${nextVersion}` 
-  });
-});
+  v1.route('/franchise',  franchiseRoute);
+  v1.route('/admin',      adminRoute);
 
 v1.route('/home',       homeRoute);
 
@@ -185,37 +105,6 @@ v1.get('/studios', (c) => {
 
 app.route('/v1', v1);
 
-// ─── Cache Warming (Manual Cron Trigger) ──────────────────────────────────────
-
-app.get('/_warm-cache', async (c) => {
-  const secret = c.req.header('X-Spun-Secret');
-  if (!secret || secret !== c.env.X_SPUN_SECRET) {
-    return errorResponse('UNAUTHORIZED', 'Unauthorized', 401);
-  }
-
-  const type = c.req.query('type') || 'all';
-  
-  switch (type) {
-    case 'movie':
-      c.executionCtx.waitUntil(buildAndCacheMovieHome(c.env));
-      break;
-    case 'tv':
-      c.executionCtx.waitUntil(buildAndCacheTvHome(c.env));
-      break;
-    case 'anime':
-      c.executionCtx.waitUntil(buildAndCacheAnimeHome(c.env));
-      break;
-    case 'all':
-    default:
-      c.executionCtx.waitUntil(buildAndCacheGeneralHome(c.env));
-  }
-
-  return c.json({ 
-    success: true, 
-    message: `Cache warming triggered for type: ${type}. It will run in the background.` 
-  });
-});
-
 // ─── Root ─────────────────────────────────────────────────────────────────────
 
 app.get('/', (c) => {
@@ -235,8 +124,8 @@ app.notFound((c) => {
 
 // ─── Error handler ────────────────────────────────────────────────────────────
 
-app.onError((err, _c) => {
-  console.error('[Worker Error]', err.message, err.stack);
+app.onError((err, c) => {
+  metadataLogger(c.env, c.executionCtx).error('worker', `Unhandled request error: ${err.message}`);
   return errorResponse('INTERNAL_ERROR', 'Unexpected error', 500);
 });
 

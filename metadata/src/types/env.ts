@@ -22,6 +22,10 @@ export interface Env {
 
   // Shared secret for Worker ↔ Render auth
   X_SPUN_SECRET: string;
+  // Administrator key for /v1/admin operations
+  ADMIN_KEY?: string;
+  // Dedicated service key for automated Render log uploads
+  LOG_UPLOAD_KEY?: string;
 
   // Subtitle catalog API
   SUBDL_API_KEY: string;

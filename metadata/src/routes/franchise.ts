@@ -8,14 +8,8 @@ import {
   getCuratedFranchise,
   listCuratedFranchises,
 } from '../config/franchises/index.js';
-import { registerCuratedFranchises } from '../franchise-registration.js';
-import { bumpCacheVersion } from '../cache.js';
 
 const franchise = new Hono<{ Bindings: Env }>();
-
-function isAuthorized(secret: string | undefined, env: Env): boolean {
-  return Boolean(secret && secret === env.X_SPUN_SECRET);
-}
 
 franchise.get('/', (_c) => {
   const results = listCuratedFranchises().map((item) => ({
@@ -26,34 +20,6 @@ franchise.get('/', (_c) => {
   }));
 
   return jsonResponse({ total: results.length, results });
-});
-
-franchise.post('/register', async (c) => {
-  if (!isAuthorized(c.req.header('X-Spun-Secret'), c.env)) {
-    return errorResponse('UNAUTHORIZED', 'Unauthorized', 401);
-  }
-
-  const reference = c.req.query('id') || c.req.query('franchise') || undefined;
-  const registration = await registerCuratedFranchises(c.env, reference);
-  if (!registration) {
-    return errorResponse('NOT_FOUND', 'Franchise not found.', 404);
-  }
-
-  let cache_version: string | null = null;
-  try {
-    cache_version = await bumpCacheVersion(c.env);
-  } catch (error) {
-    // Database registration has already succeeded. Cache invalidation is useful
-    // but must not turn that success into an endpoint failure when KV is unavailable.
-    console.error('[Franchise Registration] Cache invalidation deferred', error);
-  }
-
-  return jsonResponse({
-    success: true,
-    ...registration,
-    cache_invalidation: cache_version ? 'completed' : 'deferred',
-    cache_version,
-  });
 });
 
 franchise.get('/:reference', (c) => {

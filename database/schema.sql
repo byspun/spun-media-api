@@ -75,6 +75,15 @@ CREATE TABLE IF NOT EXISTS public.studio_ids (
   CONSTRAINT studio_ids_query_type_check CHECK (query_type IN ('watch_provider', 'network', 'company', 'anilist_studio'))
 );
 
+CREATE TABLE IF NOT EXISTS public.log_archives (
+  service TEXT NOT NULL,
+  log_date DATE NOT NULL,
+  content TEXT NOT NULL DEFAULT '',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT log_archives_pkey PRIMARY KEY (service, log_date),
+  CONSTRAINT log_archives_service_check CHECK (service IN ('metadata', 'providers'))
+);
+
 -- Indexes
 CREATE UNIQUE INDEX IF NOT EXISTS media_titles_kitsu_id_unique_idx
   ON public.media_titles (kitsu_id) WHERE kitsu_id IS NOT NULL;
@@ -100,6 +109,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_health_unique
 CREATE INDEX IF NOT EXISTS idx_provider_health_status ON public.provider_health (status);
 
 CREATE INDEX IF NOT EXISTS idx_studio_ids_category ON public.studio_ids (category);
+CREATE INDEX IF NOT EXISTS idx_log_archives_date ON public.log_archives (log_date DESC);
 
 -- Curated studio and network registry
 -- 34 entries as of 2026-08-18.
