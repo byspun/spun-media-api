@@ -14,6 +14,7 @@ import { listLogArchives, readLogArchive, replaceLogArchive } from '../log-archi
 import { metadataLogger } from '../logger.js';
 import { getDb } from '../db.js';
 import { createApiKey, getAccountById, getApiKeyById, listApiKeys, revokeApiKey } from '../../../account/store.js';
+import { createLocalUser } from '../../../account/users/service.js';
 
 const admin = new Hono<{ Bindings: Env }>();
 
@@ -31,6 +32,7 @@ const ADMIN_ENDPOINTS = [
   { method: 'POST', path: '/v1/admin/logs/flush', description: 'Flush and archive a running service log', authentication: 'X-Admin-Key' },
   { method: 'GET', path: '/v1/admin/keys/list', description: 'List masked API keys with filters and pagination', authentication: 'X-Admin-Key' },
   { method: 'GET', path: '/v1/admin/accounts/:account_id/keys/list', description: 'List keys for an account', authentication: 'X-Admin-Key' },
+  { method: 'POST', path: '/v1/admin/accounts/create', description: 'Create a local account record manually', authentication: 'X-Admin-Key' },
   { method: 'POST', path: '/v1/admin/accounts/:account_id/keys/gen', description: 'Generate an API key for an account', authentication: 'X-Admin-Key' },
   { method: 'GET', path: '/v1/admin/keys/:key_id', description: 'Read masked API-key metadata', authentication: 'X-Admin-Key' },
   { method: 'POST', path: '/v1/admin/keys/:key_id/revoke', description: 'Permanently revoke an API key', authentication: 'X-Admin-Key' },
@@ -241,6 +243,26 @@ admin.get('/keys/list', async (c) => {
   if (status && status !== 'active' && status !== 'revoked') return errorResponse('INVALID_STATUS_FILTER', 'Invalid key status filter.', 400);
   const result = await listApiKeys(getDb(c.env), { page: pageValue.page, limit: pageValue.limit, status: status as 'active' | 'revoked' | undefined, accountId });
   return jsonResponse({ keys: result.keys, pagination: { ...pageValue, total: result.total, total_pages: result.total ? Math.ceil(result.total / pageValue.limit) : 0, has_next: pageValue.page * pageValue.limit < result.total, has_previous: pageValue.page > 1 && result.total > 0 } });
+});
+
+admin.post('/accounts/create', async (c) => {
+  const bodyValue = await readJson(c);
+  if (bodyValue instanceof Response) return bodyValue;
+  const authSubject = typeof bodyValue.auth_subject === 'string' ? bodyValue.auth_subject.trim() : '';
+  if (!authSubject) return errorResponse('AUTH_SUBJECT_REQUIRED', 'Authentication subject is required.', 400);
+  const email = bodyValue.email === undefined || bodyValue.email === null ? null : typeof bodyValue.email === 'string' ? bodyValue.email.trim() || null : null;
+  if (bodyValue.email !== undefined && bodyValue.email !== null && typeof bodyValue.email !== 'string') return errorResponse('ACCOUNT_EMAIL_INVALID', 'Account email is invalid.', 400);
+  if (email && !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) return errorResponse('ACCOUNT_EMAIL_INVALID', 'Account email is invalid.', 400);
+  const name = bodyValue.name === undefined || bodyValue.name === null ? null : typeof bodyValue.name === 'string' ? bodyValue.name.trim() || null : null;
+  if (bodyValue.name !== undefined && bodyValue.name !== null && typeof bodyValue.name !== 'string') return errorResponse('BAD_REQUEST', 'Account name is invalid.', 400);
+  const status = bodyValue.status === undefined ? 'active' : bodyValue.status;
+  if (status !== 'active' && status !== 'closed') return errorResponse('BAD_REQUEST', 'Account status is invalid.', 400);
+  try {
+    const account = await createLocalUser(getDb(c.env), { authSubject, email, name, status });
+    return jsonResponse({ success: true, action: 'created', account }, 201);
+  } catch {
+    return errorResponse('ACCOUNT_CONFLICT', 'An account with this authentication subject already exists.', 409);
+  }
 });
 
 admin.get('/accounts/:accountId/keys/list', async (c) => {

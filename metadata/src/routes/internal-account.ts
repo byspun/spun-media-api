@@ -3,7 +3,7 @@ import type { AccountHonoEnv } from '../account-auth.js';
 import { requireInternal } from '../account-auth.js';
 import { getDb } from '../db.js';
 import { errorResponse, jsonResponse } from '../normalizer.js';
-import { upsertAccount } from '../../../account/store.js';
+import { syncUserAccount } from '../../../account/users/service.js';
 
 const internalAccount = new Hono<AccountHonoEnv>();
 
@@ -27,7 +27,7 @@ internalAccount.put('/:authSubject', async (c) => {
   if (body.status !== undefined && body.status !== 'active' && body.status !== 'closed') return errorResponse('BAD_REQUEST', 'Account status is invalid.', 400);
 
   try {
-    const result = await upsertAccount(getDb(c.env), {
+    const result = await syncUserAccount(getDb(c.env), {
       authSubject,
       email: typeof body.email === 'string' ? body.email.trim() || null : null,
       name: typeof body.name === 'string' ? body.name.trim() || null : null,

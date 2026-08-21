@@ -46,6 +46,15 @@ export async function getAccountByAuthSubject(sql: SqlExecutor, authSubject: str
   return rows.length ? asAccount(rows[0] as Record<string, unknown>) : null;
 }
 
+export async function createAccount(sql: SqlExecutor, input: AccountInput): Promise<AccountRecord> {
+  const rows = await sql`
+    INSERT INTO public.accounts (auth_subject, email, name, status)
+    VALUES (${input.authSubject}, ${input.email ?? null}, ${input.name ?? null}, ${input.status ?? 'active'})
+    RETURNING id, auth_subject, email, name, status, created_at, updated_at
+  `;
+  return asAccount(rows[0] as Record<string, unknown>);
+}
+
 export async function upsertAccount(sql: SqlExecutor, input: AccountInput): Promise<{ account: AccountRecord; created: boolean }> {
   const existing = await getAccountByAuthSubject(sql, input.authSubject);
   const rows = await sql`
