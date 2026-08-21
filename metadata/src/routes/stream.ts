@@ -73,7 +73,7 @@ async function handle(c: any, type: string, id: string, extra: Record<string, st
 
   try {
     const r = await fetch(`${c.env.RENDER_BACKEND_URL.replace(/\/$/, '')}/stream?${params(row, type, extra)}`, {
-      headers: { 'X-Spun-Secret': c.env.X_SPUN_SECRET, Accept: 'application/json' },
+      headers: { 'X-Internals-Key': c.env.INTERNALS_KEY ?? '', Accept: 'application/json' },
       signal: AbortSignal.timeout(28_000),
     });
     const raw: any = await r.json();

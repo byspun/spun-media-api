@@ -38,7 +38,7 @@ function safeProviderError(error: unknown): string {
 }
 
 const env = {
-  secret: process.env.X_SPUN_SECRET ?? '',
+  internalsKey: process.env.INTERNALS_KEY ?? '',
   movieboxBase: process.env.MOVIEBOX_API_BASE ?? 'https://moviebox.byspun.xyz',
   movieboxSecret: process.env.MOVIEBOX_API_SECRET ?? '',
   daratechBase: process.env.DARATECH_API_BASE ?? 'https://apimovie.runflix.name.ng/v1',
@@ -51,13 +51,13 @@ const env = {
 providerLogger.info('startup', 'Streaming configuration loaded', {
   tmdbConfigured: Boolean(env.tmdbKey),
   movieboxSecretConfigured: Boolean(env.movieboxSecret),
-  xSpunSecretConfigured: Boolean(env.secret),
+  internalsKeyConfigured: Boolean(env.internalsKey),
   daratechConfigured: Boolean(env.daratechKey),
   adminKeyConfigured: Boolean(env.adminKey),
 });
 
 function auth(request: any): boolean {
-  return Boolean(env.secret) && request.headers['x-spun-secret'] === env.secret;
+  return Boolean(env.internalsKey) && request.headers['x-internals-key'] === env.internalsKey;
 }
 
 function input(q: any): any {
@@ -210,7 +210,7 @@ async function downloadsFor(value: any): Promise<{ downloads: RawDownload[]; sub
 await app.register(cors, {
   origin: ['https://media.byspun.xyz', 'https://torii.byspun.xyz'],
   methods: ['GET', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'X-Spun-Secret', 'X-Admin-Key', 'X-Log-Upload-Key'],
+  allowedHeaders: ['Content-Type', 'X-Internals-Key', 'X-Admin-Key', 'X-Log-Upload-Key'],
 });
 
 app.addHook('onRequest', async (request, reply) => {

@@ -20,9 +20,16 @@ preview_id = "REPLACE_WITH_KV_PREVIEW_ID"
 # TMDB_BEARER_TOKEN
 # NEON_DATABASE_URL          (pooled connection string)
 # RENDER_BACKEND_URL         (Render service URL — set in Session 2)
-# X_SPUN_SECRET              (shared secret for Worker ↔ Render auth)
-# ADMIN_KEY                  (administrator key for /v1/admin)
+# INTERNALS_KEY              (shared secret for Worker ↔ Render auth)
+# ADMIN_KEY                  (administrator key for /v1/admin and public-route testing)
 # LOG_UPLOAD_KEY             (dedicated key accepted for automated log uploads)
+# SPUN_AUTH_VERIFY_URL       (optional placeholder for Spün Auth verification)
+# SPUN_AUTH_VERIFY_KEY       (optional verification credential)
+# BILLING_ENABLED            (set false until billing is ready)
+# SUBSCRIPTIONS_ENABLED      (set false until subscription enforcement is ready)
+# PLANS_ENABLED              (set false until plan enforcement is ready)
+# QUOTA_MODE                 (off, observe, or enforce)
+# RATE_LIMIT_MODE            (off, observe, or enforce)
 # SUBDL_API_KEY              (SubDL subtitle API key)
 # TASTEDIVE_API_KEY          (TasteDive similar content API key)
 

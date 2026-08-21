@@ -21,9 +21,18 @@ export interface Env {
   MOVIEBOX_API_SECRET?: string;
 
   // Shared secret for Worker ↔ Render auth
-  X_SPUN_SECRET: string;
+  INTERNALS_KEY?: string;
   // Administrator key for /v1/admin operations
   ADMIN_KEY?: string;
+  // Spün Auth verification adapter (placeholder until the authenticator contract is supplied)
+  SPUN_AUTH_VERIFY_URL?: string;
+  SPUN_AUTH_VERIFY_KEY?: string;
+  // Commercial enforcement switches; disabled by default when unset
+  BILLING_ENABLED?: string;
+  SUBSCRIPTIONS_ENABLED?: string;
+  PLANS_ENABLED?: string;
+  QUOTA_MODE?: string;
+  RATE_LIMIT_MODE?: string;
   // Dedicated service key for automated Render log uploads
   LOG_UPLOAD_KEY?: string;
 

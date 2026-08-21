@@ -14,7 +14,7 @@ services:
         value: https://moviebox.byspun.xyz
       - key: PORT
         value: 10000
-      - key: X_SPUN_SECRET
+      - key: INTERNALS_KEY
         sync: false
       - key: ADMIN_KEY
         sync: false
@@ -32,3 +32,13 @@ services:
         value: https://apimovie.runflix.name.ng/v1
       - key: DARATECH_API_KEY
         sync: false
+      - key: BILLING_ENABLED
+        value: 'false'
+      - key: SUBSCRIPTIONS_ENABLED
+        value: 'false'
+      - key: PLANS_ENABLED
+        value: 'false'
+      - key: QUOTA_MODE
+        value: off
+      - key: RATE_LIMIT_MODE
+        value: off

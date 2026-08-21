@@ -59,6 +59,41 @@ export type SpunErrorCode =
   | 'RESOLVE_CONFLICT'
   | 'RESOLVE_UNSUPPORTED_RESULT'
   | 'UNSUPPORTED_SUBJECT_TYPE'
+  | 'USER_KEY_REQUIRED'
+  | 'INVALID_USER_KEY'
+  | 'USER_KEY_REVOKED'
+  | 'USER_KEY_EXPIRED'
+  | 'ADMIN_KEY_REQUIRED'
+  | 'INVALID_ADMIN_KEY'
+  | 'INVALID_INTERNAL_KEY'
+  | 'USER_AUTH_REQUIRED'
+  | 'MULTIPLE_AUTH_METHODS'
+  | 'ACCOUNT_NOT_FOUND'
+  | 'ACCOUNT_ID_INVALID'
+  | 'ACCOUNT_INACTIVE'
+  | 'AUTH_SUBJECT_REQUIRED'
+  | 'ACCOUNT_EMAIL_INVALID'
+  | 'ACCOUNT_ALREADY_CLOSED'
+  | 'ACCOUNT_CONFLICT'
+  | 'ACCOUNT_SYNC_FAILED'
+  | 'FORBIDDEN_ACCOUNT_ACCESS'
+  | 'API_KEY_NOT_FOUND'
+  | 'ACCOUNT_REQUIRED'
+  | 'LABEL_REQUIRED'
+  | 'INVALID_KEY_LABEL'
+  | 'INVALID_KEY_EXPIRY'
+  | 'KEY_ALREADY_REVOKED'
+  | 'INVALID_REVOCATION_REASON'
+  | 'API_KEY_LIMIT_REACHED'
+  | 'INVALID_STATUS_FILTER'
+  | 'INVALID_PAGINATION'
+  | 'SUBSCRIPTION_REQUIRED'
+  | 'SUBSCRIPTION_NOT_ACTIVE'
+  | 'SUBSCRIPTION_EXPIRED'
+  | 'PLAN_NOT_FOUND'
+  | 'PLAN_NOT_AVAILABLE'
+  | 'QUOTA_EXCEEDED'
+  | 'RATE_LIMITED'
   | 'INTERNAL_ERROR';
 
 export interface SpunErrorDetail {
@@ -328,6 +363,181 @@ export const ERROR_REGISTRY: Record<SpunErrorCode, Omit<SpunErrorDetail, 'code'>
     error:       'Unsupported subject type',
     description: 'Only movie and TV subjects are supported by the Spün Media API.',
     action:      'Use subject type 1 for movies or 2 for TV content.'
+  },
+  USER_KEY_REQUIRED: {
+    error:       'User API key required',
+    description: 'This public API request requires a valid X-User-Key credential.',
+    action:      'Send a valid X-User-Key header or use the administrator credential for private testing.'
+  },
+  INVALID_USER_KEY: {
+    error:       'Invalid user API key',
+    description: 'The supplied user API key is not recognized.',
+    action:      'Check the key and try again.'
+  },
+  USER_KEY_REVOKED: {
+    error:       'User API key revoked',
+    description: 'The supplied user API key has been permanently revoked.',
+    action:      'Generate a new API key.'
+  },
+  USER_KEY_EXPIRED: {
+    error:       'User API key expired',
+    description: 'The supplied user API key has passed its expiry time.',
+    action:      'Generate a new API key or use an unexpired credential.'
+  },
+  ADMIN_KEY_REQUIRED: {
+    error:       'Administrator authentication required',
+    description: 'This management request requires the X-Admin-Key credential.',
+    action:      'Send the configured X-Admin-Key header.'
+  },
+  INVALID_ADMIN_KEY: {
+    error:       'Invalid administrator key',
+    description: 'The supplied administrator credential is missing or invalid.',
+    action:      'Send the configured X-Admin-Key header.'
+  },
+  INVALID_INTERNAL_KEY: {
+    error:       'Invalid internal key',
+    description: 'The internal service credential is missing or invalid.',
+    action:      'Retry with the configured X-Internals-Key header.'
+  },
+  USER_AUTH_REQUIRED: {
+    error:       'Account authentication required',
+    description: 'This account-management request requires a valid Spün Auth session.',
+    action:      'Sign in through Spün Auth and retry the request.'
+  },
+  MULTIPLE_AUTH_METHODS: {
+    error:       'Multiple authentication methods supplied',
+    description: 'The request supplied more than one mutually exclusive public credential.',
+    action:      'Send either X-User-Key or X-Admin-Key, not both.'
+  },
+  ACCOUNT_NOT_FOUND: {
+    error:       'Account not found',
+    description: 'The requested account does not exist in the Spün account registry.',
+    action:      'Check the account identifier or synchronize the account first.'
+  },
+  ACCOUNT_ID_INVALID: {
+    error:       'Invalid account identifier',
+    description: 'The supplied account identifier is not valid.',
+    action:      'Use a valid account UUID.'
+  },
+  ACCOUNT_INACTIVE: {
+    error:       'Account inactive',
+    description: 'The account associated with this request is not active.',
+    action:      'Contact the account administrator.'
+  },
+  AUTH_SUBJECT_REQUIRED: {
+    error:       'Authentication subject required',
+    description: 'The account synchronization request did not identify the Spün Auth subject.',
+    action:      'Retry with the stable authenticated subject.'
+  },
+  ACCOUNT_EMAIL_INVALID: {
+    error:       'Invalid account email',
+    description: 'The synchronized account email is not valid.',
+    action:      'Provide a valid email address.'
+  },
+  ACCOUNT_ALREADY_CLOSED: {
+    error:       'Account closed',
+    description: 'The account has been closed and cannot perform this operation.',
+    action:      'Contact Spün support if the account was closed by mistake.'
+  },
+  ACCOUNT_CONFLICT: {
+    error:       'Account conflict',
+    description: 'The identity could not be linked safely to a unique account.',
+    action:      'Resolve the identity mapping conflict and retry.'
+  },
+  ACCOUNT_SYNC_FAILED: {
+    error:       'Account synchronization failed',
+    description: 'The local account record could not be created or updated.',
+    action:      'Retry the synchronization request later.'
+  },
+  FORBIDDEN_ACCOUNT_ACCESS: {
+    error:       'Account access denied',
+    description: 'The authenticated caller cannot access this account.',
+    action:      'Use an account you are authorized to manage.'
+  },
+  API_KEY_NOT_FOUND: {
+    error:       'API key not found',
+    description: 'The requested API key record does not exist or is not visible to this caller.',
+    action:      'Check the key identifier and try again.'
+  },
+  ACCOUNT_REQUIRED: {
+    error:       'Account required',
+    description: 'An owning account is required before an API key can be created.',
+    action:      'Provide or synchronize a valid account.'
+  },
+  LABEL_REQUIRED: {
+    error:       'Key label required',
+    description: 'A label is required to identify the API key.',
+    action:      'Provide a non-empty key label.'
+  },
+  INVALID_KEY_LABEL: {
+    error:       'Invalid key label',
+    description: 'The API-key label is empty or exceeds the permitted length.',
+    action:      'Provide a label between 1 and 100 characters.'
+  },
+  INVALID_KEY_EXPIRY: {
+    error:       'Invalid key expiry',
+    description: 'The key expiry is malformed or is not in the future.',
+    action:      'Provide a future ISO-8601 timestamp or omit expiry.'
+  },
+  KEY_ALREADY_REVOKED: {
+    error:       'API key already revoked',
+    description: 'This API key is already permanently revoked.',
+    action:      'Generate a new API key instead.'
+  },
+  INVALID_REVOCATION_REASON: {
+    error:       'Invalid revocation reason',
+    description: 'A non-empty revocation reason is required.',
+    action:      'Provide a reason of 1 to 500 characters.'
+  },
+  API_KEY_LIMIT_REACHED: {
+    error:       'API key limit reached',
+    description: 'The account has reached the maximum active API keys allowed by its plan.',
+    action:      'Revoke an existing key or upgrade the account plan.'
+  },
+  INVALID_STATUS_FILTER: {
+    error:       'Invalid status filter',
+    description: 'The supplied API-key status filter is not supported.',
+    action:      'Use active or revoked.'
+  },
+  INVALID_PAGINATION: {
+    error:       'Invalid pagination',
+    description: 'The page or limit parameter is outside the permitted range.',
+    action:      'Use a positive page and a limit between 1 and 100.'
+  },
+  SUBSCRIPTION_REQUIRED: {
+    error:       'Subscription required',
+    description: 'This account does not have a usable subscription.',
+    action:      'Activate a subscription before using this feature.'
+  },
+  SUBSCRIPTION_NOT_ACTIVE: {
+    error:       'Subscription inactive',
+    description: 'The account subscription does not currently permit this operation.',
+    action:      'Review the subscription status or contact support.'
+  },
+  SUBSCRIPTION_EXPIRED: {
+    error:       'Subscription expired',
+    description: 'The account entitlement period has ended.',
+    action:      'Renew the subscription before retrying.'
+  },
+  PLAN_NOT_FOUND: {
+    error:       'Plan unavailable',
+    description: 'The account subscription refers to a plan that could not be found.',
+    action:      'Contact Spün support.'
+  },
+  PLAN_NOT_AVAILABLE: {
+    error:       'Plan unavailable',
+    description: 'The requested plan is not available for new entitlement.',
+    action:      'Choose an active plan.'
+  },
+  QUOTA_EXCEEDED: {
+    error:       'Usage quota exceeded',
+    description: 'The account has consumed its allowance for this usage category.',
+    action:      'Wait for the next entitlement period or move to a plan with a higher allowance.'
+  },
+  RATE_LIMITED: {
+    error:       'Too many requests',
+    description: 'The account has exceeded its configured request rate.',
+    action:      'Wait before retrying the request.'
   },
   INTERNAL_ERROR: {
     error:       'Unexpected error',

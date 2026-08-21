@@ -75,7 +75,7 @@ async function handle(
 
   try {
     const response = await fetch(`${c.env.RENDER_BACKEND_URL.replace(/\/$/, '')}/download?${qs(row, type, options)}`, {
-      headers: { 'X-Spun-Secret': c.env.X_SPUN_SECRET, Accept: 'application/json' },
+      headers: { 'X-Internals-Key': c.env.INTERNALS_KEY ?? '', Accept: 'application/json' },
       signal: AbortSignal.timeout(28_000),
     });
     const raw: any = await response.json();

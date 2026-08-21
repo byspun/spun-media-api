@@ -81,7 +81,7 @@ utility.get('/health', async (c) => {
 
       c.env.RENDER_BACKEND_URL
         ? fetch(`${c.env.RENDER_BACKEND_URL.replace(/\/$/, '')}/health`, {
-            headers: { 'X-Spun-Secret': c.env.X_SPUN_SECRET ?? '' },
+            headers: { 'X-Internals-Key': c.env.INTERNALS_KEY ?? '' },
           }).catch(() => null)
         : Promise.resolve(null),
 

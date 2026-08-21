@@ -27,6 +27,9 @@ import proxyRoute     from './routes/proxy.js';
 import utilityRoute   from './routes/utility.js';
 import franchiseRoute from './routes/franchise.js';
 import adminRoute    from './routes/admin.js';
+import accountRoute  from './routes/account.js';
+import internalAccountRoute from './routes/internal-account.js';
+import { authenticatePublic } from './account-auth.js';
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -34,8 +37,8 @@ const app = new Hono<{ Bindings: Env }>();
 
 app.use('*', cors({
   origin:          '*',
-  allowMethods:    ['GET', 'POST', 'OPTIONS'],
-  allowHeaders:    ['Content-Type', 'Authorization', 'X-Spun-Secret', 'X-Admin-Key', 'X-Log-Upload-Key'],
+  allowMethods:    ['GET', 'POST', 'PUT', 'OPTIONS'],
+  allowHeaders:    ['Content-Type', 'Authorization', 'X-User-Key', 'X-Admin-Key', 'X-Internals-Key', 'X-Log-Upload-Key'],
   exposeHeaders:   ['X-Cache', 'X-Response-Time'],
   maxAge:          86400,
 }));
@@ -52,7 +55,9 @@ app.use('*', async (c, next) => {
 
 // ─── /v1 routes ───────────────────────────────────────────────────────────────
 
-const v1 = new Hono<{ Bindings: Env }>();
+const v1 = new Hono<{ Bindings: Env; Variables: { 'spun.principal': import('../../account/types.js').AuthPrincipal; 'spun.session': import('../../account/types.js').AuthSession } }>();
+
+v1.use('*', authenticatePublic);
 
 v1.route('/search',     searchRoute);
 v1.route('/info',       infoRoute);
@@ -66,6 +71,8 @@ v1.route('/proxy',      proxyRoute);
 v1.route('/utility',    utilityRoute);
   v1.route('/franchise',  franchiseRoute);
   v1.route('/admin',      adminRoute);
+  v1.route('/account',    accountRoute);
+  v1.route('/internal/accounts', internalAccountRoute);
 
 v1.route('/home',       homeRoute);
 

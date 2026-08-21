@@ -5,7 +5,7 @@ import { createLogger, type LogLevel } from '../logs/logger.js';
 const service = 'providers' as const;
 const logsDir = path.resolve(process.cwd(), '../logs/providers');
 const uploadUrl = process.env.LOG_UPLOAD_URL ?? 'https://media.byspun.xyz/v1/admin/logs/upload';
-const uploadKey = process.env.LOG_UPLOAD_KEY ?? process.env.X_SPUN_SECRET ?? '';
+const uploadKey = process.env.LOG_UPLOAD_KEY ?? '';
 const checkpointMs = Number(process.env.LOG_UPLOAD_INTERVAL_MS ?? 900_000);
 
 let currentDate = new Date().toISOString().slice(0, 10);
