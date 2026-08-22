@@ -94,6 +94,13 @@ export type SpunErrorCode =
   | 'PLAN_NOT_AVAILABLE'
   | 'QUOTA_EXCEEDED'
   | 'RATE_LIMITED'
+  | 'PROXY_UPSTREAM_NOT_ALLOWED'
+  | 'PROXY_MANIFEST_TOO_LARGE'
+  | 'PROXY_MANIFEST_UNSUPPORTED'
+  | 'INVALID_EPISODE'
+  | 'INVALID_SEASON'
+  | 'INVALID_YEAR'
+  | 'PAYLOAD_TOO_LARGE'
   | 'INTERNAL_ERROR';
 
 export interface SpunErrorDetail {
@@ -538,6 +545,41 @@ export const ERROR_REGISTRY: Record<SpunErrorCode, Omit<SpunErrorDetail, 'code'>
     error:       'Too many requests',
     description: 'The account has exceeded its configured request rate.',
     action:      'Wait before retrying the request.'
+  },
+  PROXY_UPSTREAM_NOT_ALLOWED: {
+    error:       'Media source not allowed',
+    description: 'The requested media source failed Spün’s proxy safety checks.',
+    action:      'Request another stream or subtitle URL.'
+  },
+  PROXY_MANIFEST_TOO_LARGE: {
+    error:       'Stream manifest too large',
+    description: 'The HLS manifest exceeds the maximum size accepted by the proxy.',
+    action:      'Request another stream source.'
+  },
+  PROXY_MANIFEST_UNSUPPORTED: {
+    error:       'Stream manifest unsupported',
+    description: 'The HLS manifest could not be safely rewritten for proxy delivery.',
+    action:      'Request another stream source.'
+  },
+  INVALID_EPISODE: {
+    error:       'Invalid episode reference',
+    description: 'The season and episode must be positive integers within the supported range.',
+    action:      'Provide valid season and episode values.'
+  },
+  INVALID_SEASON: {
+    error:       'Invalid season',
+    description: 'The supplied season value is not valid for this endpoint.',
+    action:      'Provide a valid season value.'
+  },
+  INVALID_YEAR: {
+    error:       'Invalid year',
+    description: 'The supplied year value is not a valid supported year.',
+    action:      'Provide a four-digit year between 1900 and 2100.'
+  },
+  PAYLOAD_TOO_LARGE: {
+    error:       'Payload too large',
+    description: 'The request body exceeds the maximum size accepted by this endpoint.',
+    action:      'Reduce the request size and try again.'
   },
   INTERNAL_ERROR: {
     error:       'Unexpected error',

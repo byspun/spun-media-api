@@ -46,8 +46,13 @@ import {
 } from '../identity/resolver.js';
 import { getMembershipSummaries, getRelationshipGroups } from '../relationships.js';
 import { getMovieboxInfo } from '../meta/moviebox.js';
+import { metadataLogger } from '../logger.js';
 
 const info = new Hono<{ Bindings: Env }>();
+
+function validOptionalSeason(value: string | undefined): boolean {
+  return value === undefined || (/^\d+$/.test(value) && Number(value) > 0 && Number(value) <= 100);
+}
 
 function normalizeKitsuEpisodes(
   spunId: string,
@@ -97,7 +102,7 @@ info.get('/:spunId', async (c) => {
   if (cached) return jsonResponse(cached);
 
   const row = await getBySpunId(c.env, spunId);
-  if (!row) return errorResponse('NOT_FOUND', 'Title not found.', 404);
+  if (!row) return errorResponse('INVALID_ID', 'Content not found.', 404);
 
   let payload: unknown;
   if (row.content_type === 'movie' && row.tmdb_id) {
@@ -108,7 +113,7 @@ info.get('/:spunId', async (c) => {
     try {
       movieInfo.part_of = await getMembershipSummaries(c.env, row, movie.belongs_to_collection);
     } catch (err) {
-      console.error('[Info] Movie relationship context failed:', err);
+      metadataLogger(c.env).warn('info', 'Movie relationship context failed', err);
     }
     payload = movieInfo;
 
@@ -120,7 +125,7 @@ info.get('/:spunId', async (c) => {
     try {
       tvInfo.part_of = await getMembershipSummaries(c.env, row);
     } catch (err) {
-      console.error('[Info] TV relationship context failed:', err);
+      metadataLogger(c.env).warn('info', 'TV relationship context failed', err);
     }
     payload = tvInfo;
 
@@ -137,7 +142,7 @@ info.get('/:spunId', async (c) => {
     try {
       animeInfo.part_of = await getMembershipSummaries(c.env, row);
     } catch (err) {
-      console.error('[Info] Anime relationship context failed:', err);
+      metadataLogger(c.env).warn('info', 'Anime relationship context failed', err);
     }
     payload = animeInfo;
     // Use shorter TTL for airing anime
@@ -153,7 +158,7 @@ info.get('/:spunId', async (c) => {
     try {
       animeInfo.part_of = await getMembershipSummaries(c.env, row);
     } catch (err) {
-      console.error('[Info] Kitsu relationship context failed:', err);
+      metadataLogger(c.env).warn('info', 'Kitsu relationship context failed', err);
     }
     payload = animeInfo;
     await kvSet(c.env, cacheKey, payload, TTL.metadata);
@@ -166,7 +171,7 @@ info.get('/:spunId', async (c) => {
     try {
       movieboxInfo.part_of = await getMembershipSummaries(c.env, row);
     } catch (err) {
-      console.error('[Info] MovieBox relationship context failed:', err);
+      metadataLogger(c.env).warn('info', 'MovieBox relationship context failed', err);
     }
     payload = movieboxInfo;
   } else {
@@ -182,12 +187,13 @@ info.get('/:spunId', async (c) => {
 info.get('/:spunId/episodes', async (c) => {
   const spunId   = c.req.param('spunId');
   const season   = c.req.query('season');
+  if (!validOptionalSeason(season)) return errorResponse('INVALID_SEASON', 'Season must be a positive integer.', 400);
   const cacheKey = CacheKeys.episodes(spunId, season ?? 'all');
   const cached   = await kvGet(c.env, cacheKey);
   if (cached) return jsonResponse(cached);
 
   const row = await getBySpunId(c.env, spunId);
-  if (!row) return errorResponse('NOT_FOUND', 'Title not found.', 404);
+  if (!row) return errorResponse('INVALID_ID', 'Content not found.', 404);
 
   if (row.content_type === 'movie') {
     return errorResponse('INVALID_TYPE', 'Movies do not have episodes.', 400);
@@ -240,7 +246,7 @@ info.get('/:spunId/episodes', async (c) => {
         if (kitsuAnime) linkKitsuId(c.env, spunId, kitsuAnime.id).catch(() => {});
       }
     } catch (err) {
-      console.error('[Info] Kitsu anime lookup failed; using fallback:', err);
+      metadataLogger(c.env).warn('info', 'Kitsu anime lookup failed; using fallback', err);
     }
 
     const isAiring = media?.status === 'RELEASING'
@@ -263,7 +269,7 @@ info.get('/:spunId/episodes', async (c) => {
           }
         }
       } catch (err) {
-        console.error('[Info] Kitsu episode lookup failed; using TMDB fallback:', err);
+        metadataLogger(c.env).warn('info', 'Kitsu episode lookup failed; using TMDB fallback', err);
       }
     }
 
@@ -296,9 +302,11 @@ info.get('/:spunId/episodes', async (c) => {
 
     // Last-resort stable shape from AniList’s known episode count.
     const episodeCount = media?.episodes ?? kitsuAnime?.attributes.episodeCount ?? 0;
-    const payload: EpisodesResponse = {
+    const payload: EpisodesResponse & { metadata_complete: boolean; data_status: string } = {
       spun_id: spunId,
       type: 'anime',
+      metadata_complete: false,
+      data_status: 'partial',
       seasons: [{
         season: 1,
         count: episodeCount,
@@ -330,7 +338,7 @@ info.get('/:spunId/cast', async (c) => {
   if (cached) return jsonResponse(cached);
 
   const row = await getBySpunId(c.env, spunId);
-  if (!row) return errorResponse('NOT_FOUND', 'Title not found.', 404);
+  if (!row) return errorResponse('INVALID_ID', 'Content not found.', 404);
 
   let cast: Array<{ image: string | null; character: string | null; name: string }> = [];
 
@@ -382,7 +390,7 @@ info.get('/:spunId/related', async (c) => {
   if (cached) return jsonResponse(cached);
 
   const row = await getBySpunId(c.env, spunId);
-  if (!row) return errorResponse('NOT_FOUND', 'Title not found.', 404);
+  if (!row) return errorResponse('INVALID_ID', 'Content not found.', 404);
 
   const related: RelatedEntry[] = [];
 
@@ -406,7 +414,7 @@ info.get('/:spunId/related', async (c) => {
               item: anilistToItem(node, relationRow.spun_id),
             } satisfies RelatedEntry;
           } catch (err) {
-            console.error('[Related] Anime relation resolution failed:', err);
+            metadataLogger(c.env).warn('info', 'Anime relation resolution failed', err);
             return null;
           }
         })
@@ -422,7 +430,7 @@ info.get('/:spunId/related', async (c) => {
   } catch (err) {
     // Relationship context is optional enrichment. A valid title with no
     // available group data remains a successful empty result.
-    console.error('[Related] Group assembly failed:', err);
+    metadataLogger(c.env).warn('info', 'Group assembly failed', err);
   }
 
   const payload: RelatedResponse = { spun_id: spunId, related, groups };

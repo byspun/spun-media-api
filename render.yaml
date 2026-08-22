@@ -16,9 +16,9 @@ services:
         value: 10000
       - key: INTERNALS_KEY
         sync: false
-      - key: ADMIN_KEY
+      - key: NEON_DATABASE_URL
         sync: false
-      - key: PROVIDER_DIAGNOSTIC_SECRET
+      - key: ADMIN_KEY
         sync: false
       - key: LOG_UPLOAD_URL
         value: https://media.byspun.xyz/v1/admin/logs/upload

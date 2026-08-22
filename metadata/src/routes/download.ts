@@ -28,7 +28,13 @@ function qs(row: MediaTitleRow, type: string, extra: DownloadRequestOptions): UR
 function positiveInteger(value: string | undefined): number | undefined {
   if (!value || !/^\d+$/.test(value)) return undefined;
   const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+  return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= 10_000 ? parsed : undefined;
+}
+
+function validEpisodeOptions(options: DownloadRequestOptions): boolean {
+  const supplied = options.season !== undefined || options.episode !== undefined;
+  if (!supplied) return true;
+  return positiveInteger(options.season) !== undefined && positiveInteger(options.episode) !== undefined;
 }
 
 function mapDownloadItem(item: any) {
@@ -68,6 +74,8 @@ async function handle(
   id: string,
   options: DownloadRequestOptions,
 ): Promise<Response> {
+  if (type !== 'movie' && type !== 'tv' && type !== 'anime') return errorResponse('INVALID_TYPE', 'Type must be movie, tv, or anime.', 400);
+  if (!validEpisodeOptions(options)) return errorResponse('INVALID_EPISODE', 'Season and episode must be positive integers.', 400);
   const row = await getBySpunId(c.env, id);
   if (!row) return errorResponse('INVALID_ID', 'Content not found.', 404);
   if (row.content_type !== type) return errorResponse('BAD_REQUEST', 'Content type mismatch.', 400);

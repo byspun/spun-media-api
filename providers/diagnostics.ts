@@ -1,7 +1,6 @@
 import { fetchWithRetry, findBestMatch } from './shared/http.js';
 
 export type DiagnosticConfig = {
-  diagnosticSecret: string;
   daratechBase: string;
   daratechKey: string;
 };
@@ -20,14 +19,9 @@ export type DiagnosticStep = {
   payload?: unknown;
 };
 
-export function diagnosticAuth(request: any, secret: string): boolean {
-  return Boolean(secret) && request.headers['x-diagnostic-secret'] === secret;
-}
-
 export function redactDiagnosticText(value: string, config: DiagnosticConfig): string {
   let redacted = value;
   if (config.daratechKey) redacted = redacted.split(config.daratechKey).join('[redacted-secret]');
-  if (config.diagnosticSecret) redacted = redacted.split(config.diagnosticSecret).join('[redacted-diagnostic-secret]');
   return redacted
     .replace(/(authorization\s*[:=]\s*)([^,\s}]+)/gi, '$1[redacted]')
     .replace(/([?&](?:api[-_]?key|token|secret|authorization)=)[^&\s]+/gi, '$1[redacted]')

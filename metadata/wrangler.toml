@@ -6,14 +6,10 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 ENVIRONMENT = "production"
 
-# KV Namespaces — create these with:
-# wrangler kv:namespace create "MEDIA_CACHE"
-# wrangler kv:namespace create "MEDIA_CACHE" --preview
-# Then paste the IDs below
+# Production KV namespace used by the deployed Worker.
 [[kv_namespaces]]
 binding = "MEDIA_CACHE"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
-preview_id = "REPLACE_WITH_KV_PREVIEW_ID"
+id = "92b74f9efcef49b7834466a0f031ee95"
 
 # Secrets — set with wrangler secret put <NAME>:
 # TMDB_API_KEY

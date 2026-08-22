@@ -15,6 +15,7 @@ const proxy = new Hono<{ Bindings: Env }>();
 const MAX_ARCHIVE_BYTES = 5 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES = 20;
 const MAX_SUBTITLE_BYTES = 2 * 1024 * 1024;
+const MAX_SUBTITLE_REDIRECTS = 4;
 const ALLOWED_SUBTITLE_HOSTS = [
   'subdl.com',
   'dl.subdl.com',
@@ -74,18 +75,27 @@ async function readLimited(response: Response, maxBytes: number): Promise<Uint8A
 async function fetchSubtitle(url: string, requestHeaders: Record<string, string> = {}): Promise<Uint8Array | null> {
   if (!isAllowedSubtitleUrl(url)) return null;
   const allowedHeaders = new Set(['accept', 'cookie', 'origin', 'referer', 'user-agent', 'x-requested-with']);
-  const safeHeaders = Object.fromEntries(Object.entries(requestHeaders).filter(([key, value]) => allowedHeaders.has(key.toLowerCase()) && value.length < 2000));
+  const safeHeaders = Object.fromEntries(Object.entries(requestHeaders).filter(([key, value]) => allowedHeaders.has(key.toLowerCase()) && typeof value === 'string' && value.length < 2000));
+  const headers = {
+    Accept: 'text/vtt, text/plain, application/x-subrip, application/zip, */*',
+    'User-Agent': 'Mozilla/5.0 (compatible; SpunMediaSubtitleProxy/1.0)',
+    ...safeHeaders,
+  };
   try {
-    const response = await fetch(url, {
-      redirect: 'follow',
-      headers: {
-        Accept: 'text/vtt, text/plain, application/x-subrip, application/zip, */*',
-        'User-Agent': 'Mozilla/5.0 (compatible; SpunMediaSubtitleProxy/1.0)',
-        ...safeHeaders,
-      },
-    });
-    if (!response.ok) return null;
-    return readLimited(response, MAX_ARCHIVE_BYTES);
+    let current = new URL(url);
+    for (let redirect = 0; redirect <= MAX_SUBTITLE_REDIRECTS; redirect++) {
+      if (!isAllowedSubtitleUrl(current.toString())) return null;
+      const response = await fetch(current, { redirect: 'manual', headers });
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get('Location');
+        if (!location || redirect === MAX_SUBTITLE_REDIRECTS) return null;
+        current = new URL(location, current);
+        continue;
+      }
+      if (!response.ok) return null;
+      return readLimited(response, MAX_ARCHIVE_BYTES);
+    }
+    return null;
   } catch {
     return null;
   }

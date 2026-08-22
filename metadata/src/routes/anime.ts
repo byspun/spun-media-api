@@ -59,6 +59,26 @@ import { getGenreById } from '../config/genres.js';
 
 const anime = new Hono<{ Bindings: Env }>();
 
+anime.use('*', async (c, next) => {
+  const page = c.req.query('page');
+  if (page !== undefined && (!/^\d+$/.test(page) || Number(page) < 1 || Number(page) > 500)) {
+    return errorResponse('INVALID_PAGINATION', 'Page must be a positive integer no greater than 500.', 400);
+  }
+  const year = c.req.param('year');
+  if (year !== undefined && (!/^\d{4}$/.test(year) || Number(year) < 1900 || Number(year) > 2100)) {
+    return errorResponse('INVALID_YEAR', 'Year must be a valid four-digit year.', 400);
+  }
+  const season = c.req.param('season');
+  if (season !== undefined && !['winter', 'spring', 'summer', 'fall'].includes(season.toLowerCase())) {
+    return errorResponse('INVALID_SEASON', 'Season must be winter, spring, summer, or fall.', 400);
+  }
+  const studioId = c.req.param('studioId');
+  if (studioId !== undefined && (!/^\d+$/.test(studioId) || Number(studioId) < 1)) {
+    return errorResponse('INVALID_STUDIO', 'Studio ID must be a positive integer.', 400);
+  }
+  await next();
+});
+
 // ─── Helper: AniList media list → ContentItems with spun_ids ─────────────────
 
 async function toItems(env: Env, media: any[]): Promise<ContentItem[]> {
@@ -397,7 +417,7 @@ anime.get('/:spunId/themes', async (c) => {
 
   const row = await getBySpunId(c.env, spunId);
   if (!row || row.content_type !== 'anime') {
-    return errorResponse('NOT_FOUND', 'Anime not found.', 404);
+    return errorResponse('INVALID_ID', 'Anime content not found.', 404);
   }
 
   const malId = row.mal_id;
@@ -407,16 +427,16 @@ anime.get('/:spunId/themes', async (c) => {
       const media = await getAnilistMedia(c.env, row.anilist_id);
       if (media?.idMal) {
         const themes = await getJikanThemes(c.env, media.idMal);
-        const payload = { spun_id: spunId, themes };
+        const payload = { spun_id: spunId, data_status: 'complete', themes };
         await kvSet(c.env, cacheKey, payload, TTL.metadata);
         return jsonResponse(payload);
       }
     }
-    return jsonResponse({ spun_id: spunId, themes: [] });
+    return jsonResponse({ spun_id: spunId, data_status: 'unavailable', themes: [] });
   }
 
   const themes  = await getJikanThemes(c.env, malId);
-  const payload = { spun_id: spunId, themes };
+  const payload = { spun_id: spunId, data_status: 'complete', themes };
   await kvSet(c.env, cacheKey, payload, TTL.metadata);
   return jsonResponse(payload);
 });
@@ -432,7 +452,7 @@ anime.get('/:spunId/fillers', async (c) => {
 
   const row = await getBySpunId(c.env, spunId);
   if (!row || row.content_type !== 'anime') {
-    return errorResponse('NOT_FOUND', 'Anime not found.', 404);
+    return errorResponse('INVALID_ID', 'Anime content not found.', 404);
   }
 
   let malId = row.mal_id;
@@ -441,11 +461,11 @@ anime.get('/:spunId/fillers', async (c) => {
     malId = media?.idMal ?? null;
   }
 
-  if (!malId) return jsonResponse({ spun_id: spunId, fillers: [], has_more: false });
+  if (!malId) return jsonResponse({ spun_id: spunId, data_status: 'unavailable', fillers: [], has_more: false });
 
   const allFillers = await getJikanFillers(c.env, malId);
   // JikanFillers isn't paginated in the proxy yet, return all
-  const payload = { spun_id: spunId, page, has_more: false, fillers: allFillers };
+  const payload = { spun_id: spunId, page, data_status: 'complete', has_more: false, fillers: allFillers };
   await kvSet(c.env, cacheKey, payload, TTL.metadata);
   return jsonResponse(payload);
 });
@@ -457,7 +477,7 @@ anime.get('/:spunId/franchise', async (c) => {
 
   const row = await getBySpunId(c.env, spunId);
   if (!row || row.content_type !== 'anime' || !row.anilist_id) {
-    return errorResponse('NOT_FOUND', 'Anime not found.', 404);
+    return errorResponse('INVALID_ID', 'Anime content not found.', 404);
   }
 
   const relationEdges = await getAnilistRelations(c.env, row.anilist_id);
@@ -500,7 +520,7 @@ anime.get('/:spunId/characters', async (c) => {
 
   const row = await getBySpunId(c.env, spunId);
   if (!row || row.content_type !== 'anime' || !row.anilist_id) {
-    return errorResponse('NOT_FOUND', 'Anime not found.', 404);
+    return errorResponse('INVALID_ID', 'Anime content not found.', 404);
   }
 
   const characterEdges = await getAnilistCharacters(c.env, row.anilist_id);

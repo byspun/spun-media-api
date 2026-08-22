@@ -11,6 +11,7 @@
     "dev:providers": "cd providers && npm run dev",
     "deploy:metadata": "cd metadata && npm run deploy",
     "type-check":    "cd metadata && npm run type-check && cd ../providers && npm run type-check",
+    "test":          "cd providers && npm test",
     "install:all":   "npm install && cd metadata && npm install && cd ../providers && npm install"
   }
 }

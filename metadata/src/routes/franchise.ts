@@ -24,7 +24,7 @@ franchise.get('/', (_c) => {
 
 franchise.get('/:reference', (c) => {
   const item = getCuratedFranchise(c.req.param('reference'));
-  if (!item) return errorResponse('NOT_FOUND', 'Franchise not found.', 404);
+  if (!item) return errorResponse('INVALID_ID', 'Franchise not found.', 404);
 
   return jsonResponse({
     id:    item.id,

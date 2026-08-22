@@ -59,7 +59,7 @@ export function universalSlugify(value: unknown): string {
 export function isSafeHttpUrl(value: unknown): value is string {
   try {
     const url = new URL(String(value));
-    return url.protocol === 'https:' || url.protocol === 'http:';
+    return url.protocol === 'https:';
   } catch {
     return false;
   }

@@ -4,8 +4,9 @@ import { createLogger, type LogLevel } from '../logs/logger.js';
 
 const service = 'providers' as const;
 const logsDir = path.resolve(process.cwd(), '../logs/providers');
-const uploadUrl = process.env.LOG_UPLOAD_URL ?? 'https://media.byspun.xyz/v1/admin/logs/upload';
+const uploadUrl = process.env.LOG_UPLOAD_URL;
 const uploadKey = process.env.LOG_UPLOAD_KEY ?? '';
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 const checkpointMs = Number(process.env.LOG_UPLOAD_INTERVAL_MS ?? 900_000);
 
 let currentDate = new Date().toISOString().slice(0, 10);
@@ -45,9 +46,13 @@ function writeLine(line: string): void {
 }
 
 async function uploadLog(date: string): Promise<void> {
-  if (!uploadKey || !fs.existsSync(filePath(date))) return;
+  const archive = filePath(date);
+  if (!uploadUrl || !uploadKey || !fs.existsSync(archive)) return;
   try {
-    const content = fs.readFileSync(filePath(date), 'utf8');
+    const bytes = fs.readFileSync(archive);
+    const content = bytes.length > MAX_UPLOAD_BYTES
+      ? bytes.subarray(bytes.length - MAX_UPLOAD_BYTES).toString('utf8')
+      : bytes.toString('utf8');
     const response = await fetch(uploadUrl, {
       method: 'POST',
       headers: {
@@ -85,7 +90,7 @@ export async function flushProviderLogs(): Promise<{ service: string; date: stri
   const before = fs.existsSync(filePath(date));
   await uploadLog(date);
   ensureStream();
-  return { service, date, uploaded: Boolean(uploadKey && before) };
+  return { service, date, uploaded: Boolean(uploadUrl && uploadKey && before) };
 }
 
 export function stopProviderLogArchiver(): void {

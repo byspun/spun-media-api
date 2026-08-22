@@ -20,6 +20,13 @@ import { searchMoviebox as searchMovieboxMetadata } from '../meta/moviebox.js';
 
 const search = new Hono<{ Bindings: Env }>();
 
+function parsePage(value: string | undefined): number | null {
+  if (value === undefined) return 1;
+  if (!/^\d+$/.test(value)) return null;
+  const page = Number(value);
+  return Number.isSafeInteger(page) && page > 0 && page <= 500 ? page : null;
+}
+
 interface MovieBoxSearchItem {
   subjectId: string;
   subjectType?: number | null;
@@ -183,14 +190,18 @@ async function batchAnilistItems(
 
 search.get('/', async (c) => {
   const q    = c.req.query('q')?.trim();
-  const page = parseInt(c.req.query('page') ?? '1');
+  const page = parsePage(c.req.query('page'));
   const type = c.req.query('type') as ContentType | 'all' | undefined;
 
   if (!q || q.length < 2) {
     return errorResponse('MISSING_QUERY', 'Query must be at least 2 characters.', 400);
   }
+  if (page === null) return errorResponse('INVALID_PAGINATION', 'Page must be a positive integer.', 400);
 
   const normalizedType = type ?? 'all';
+  if (!['all', 'movie', 'tv', 'anime'].includes(normalizedType)) {
+    return errorResponse('INVALID_TYPE', 'Type must be all, movie, tv, or anime.', 400);
+  }
   const cacheKey       = CacheKeys.search(q, normalizedType, page);
   const cached         = await kvGet(c.env, cacheKey);
   if (cached) return jsonResponse(cached);
@@ -245,7 +256,7 @@ search.get('/', async (c) => {
 
     // TMDB supplies movies and TV; AniList supplies anime. Avoid one metadata
     // check per TMDB result so fresh all-search requests stay within limits.
-    const noAnime = tmdb.results as any[];
+    const noAnime = await filterOutAnime(c.env, tmdb.results as any[]);
 
     const [tmdbItems, animeItems] = await Promise.all([
       batchTmdbItems(c.env, noAnime as any),
@@ -273,8 +284,10 @@ search.get('/', async (c) => {
 
   const payload = {
     page,
-    total_pages:   totalPages,
+    total_pages: totalPages,
     total_results: totalResults,
+    total_pages_exact: normalizedType === 'anime',
+    total_results_exact: normalizedType === 'anime',
     results,
   };
 
@@ -323,8 +336,9 @@ search.get('/suggestions', async (c) => {
 
 search.get('/movie', async (c) => {
   const q    = c.req.query('q')?.trim();
-  const page = parseInt(c.req.query('page') ?? '1');
+  const page = parsePage(c.req.query('page'));
   if (!q || q.length < 2) return errorResponse('MISSING_QUERY', 'Query must be at least 2 characters.', 400);
+  if (page === null) return errorResponse('INVALID_PAGINATION', 'Page must be a positive integer.', 400);
 
   const cacheKey = CacheKeys.search(q, 'movie', page);
   const cached   = await kvGet(c.env, cacheKey);
@@ -337,7 +351,7 @@ search.get('/movie', async (c) => {
   const movieboxItems = await batchMovieboxItems(c.env, moviebox.filter((item) => item.subjectType === 1 || item.type === 'movie'), 'movie', canonicalTitles);
   const results = [...tmdbItems, ...movieboxItems];
 
-  const payload = { page, total_pages: tmdb.total_pages, total_results: tmdb.total_results + movieboxItems.length, results };
+  const payload = { page, total_pages: tmdb.total_pages, total_results: tmdb.total_results + movieboxItems.length, total_pages_exact: false, total_results_exact: false, results };
   await kvSet(c.env, cacheKey, payload, TTL.search);
   return jsonResponse(payload);
 });
@@ -346,8 +360,9 @@ search.get('/movie', async (c) => {
 
 search.get('/tv', async (c) => {
   const q    = c.req.query('q')?.trim();
-  const page = parseInt(c.req.query('page') ?? '1');
+  const page = parsePage(c.req.query('page'));
   if (!q || q.length < 2) return errorResponse('MISSING_QUERY', 'Query must be at least 2 characters.', 400);
+  if (page === null) return errorResponse('INVALID_PAGINATION', 'Page must be a positive integer.', 400);
 
   const cacheKey = CacheKeys.search(q, 'tv', page);
   const cached   = await kvGet(c.env, cacheKey);
@@ -360,7 +375,7 @@ search.get('/tv', async (c) => {
   const movieboxItems = await batchMovieboxItems(c.env, moviebox.filter((item) => item.subjectType === 2 || item.type === 'tv'), 'tv', canonicalTitles);
   const results = [...tmdbItems, ...movieboxItems];
 
-  const payload = { page, total_pages: tmdb.total_pages, total_results: tmdb.total_results + movieboxItems.length, results };
+  const payload = { page, total_pages: tmdb.total_pages, total_results: tmdb.total_results + movieboxItems.length, total_pages_exact: false, total_results_exact: false, results };
   await kvSet(c.env, cacheKey, payload, TTL.search);
   return jsonResponse(payload);
 });
@@ -369,8 +384,9 @@ search.get('/tv', async (c) => {
 
 search.get('/anime', async (c) => {
   const q    = c.req.query('q')?.trim();
-  const page = parseInt(c.req.query('page') ?? '1');
+  const page = parsePage(c.req.query('page'));
   if (!q || q.length < 2) return errorResponse('MISSING_QUERY', 'Query must be at least 2 characters.', 400);
+  if (page === null) return errorResponse('INVALID_PAGINATION', 'Page must be a positive integer.', 400);
 
   const cacheKey = CacheKeys.search(q, 'anime', page);
   const cached   = await kvGet(c.env, cacheKey);
@@ -379,7 +395,7 @@ search.get('/anime', async (c) => {
   const { media, hasNextPage } = await searchAnilist(c.env, q, page, 20);
   const items = await batchAnilistItems(c.env, media);
 
-  const payload = { page, total_pages: hasNextPage ? page + 1 : page, total_results: items.length, results: items };
+  const payload = { page, total_pages: hasNextPage ? page + 1 : page, total_results: items.length, total_pages_exact: false, total_results_exact: false, results: items };
   await kvSet(c.env, cacheKey, payload, TTL.search);
   return jsonResponse(payload);
 });

@@ -31,11 +31,11 @@ const ADMIN_ENDPOINTS = [
   { method: 'POST', path: '/v1/admin/logs/upload', description: 'Store supplied log content', authentication: 'X-Log-Upload-Key or X-Admin-Key' },
   { method: 'POST', path: '/v1/admin/logs/flush', description: 'Flush and archive a running service log', authentication: 'X-Admin-Key' },
   { method: 'GET', path: '/v1/admin/keys/list', description: 'List masked API keys with filters and pagination', authentication: 'X-Admin-Key' },
-  { method: 'GET', path: '/v1/admin/accounts/:account_id/keys/list', description: 'List keys for an account', authentication: 'X-Admin-Key' },
+  { method: 'GET', path: '/v1/admin/accounts/:accountId/keys/list', description: 'List keys for an account', authentication: 'X-Admin-Key' },
   { method: 'POST', path: '/v1/admin/accounts/create', description: 'Create a local account record manually', authentication: 'X-Admin-Key' },
-  { method: 'POST', path: '/v1/admin/accounts/:account_id/keys/gen', description: 'Generate an API key for an account', authentication: 'X-Admin-Key' },
-  { method: 'GET', path: '/v1/admin/keys/:key_id', description: 'Read masked API-key metadata', authentication: 'X-Admin-Key' },
-  { method: 'POST', path: '/v1/admin/keys/:key_id/revoke', description: 'Permanently revoke an API key', authentication: 'X-Admin-Key' },
+  { method: 'POST', path: '/v1/admin/accounts/:accountId/keys/gen', description: 'Generate an API key for an account', authentication: 'X-Admin-Key' },
+  { method: 'GET', path: '/v1/admin/keys/:keyId', description: 'Read masked API-key metadata', authentication: 'X-Admin-Key' },
+  { method: 'POST', path: '/v1/admin/keys/:keyId/revoke', description: 'Permanently revoke an API key', authentication: 'X-Admin-Key' },
 ] as const;
 
 function adminKey(env: Env): string {
@@ -54,6 +54,10 @@ function validService(value: string): value is 'metadata' | 'providers' {
   return value === 'metadata' || value === 'providers';
 }
 
+function validHomeType(value: string): value is 'all' | 'movie' | 'tv' | 'anime' {
+  return value === 'all' || value === 'movie' || value === 'tv' || value === 'anime';
+}
+
 admin.use('*', async (c, next) => {
   const uploadRoute = c.req.path.endsWith('/logs/upload');
   const uploadKey = c.req.header('X-Log-Upload-Key');
@@ -70,6 +74,7 @@ admin.get('/', (_c) => jsonResponse({
 
 admin.post('/home/build', async (c) => {
   const type = c.req.query('type') || 'all';
+  if (!validHomeType(type)) return errorResponse('BAD_REQUEST', 'Invalid homepage type.', 400);
   const wait = c.req.query('wait') === 'true';
   const logger = metadataLogger(c.env, c.executionCtx);
   const buildPromise = (async () => {
@@ -107,6 +112,7 @@ admin.post('/home/backfill', async (c) => {
 
 admin.post('/home/warm-cache', async (c) => {
   const type = c.req.query('type') || 'all';
+  if (!validHomeType(type)) return errorResponse('BAD_REQUEST', 'Invalid homepage type.', 400);
   const logger = metadataLogger(c.env, c.executionCtx);
   const task = type === 'movie'
     ? buildAndCacheMovieHome(c.env)
@@ -169,15 +175,28 @@ admin.get('/diagnostics/:provider/:type', async (c) => {
 });
 
 admin.get('/logs', async (c) => {
+  const pageValue = pagination(c);
+  if (pageValue instanceof Response) return pageValue;
   const filters = {
     service: c.req.query('service'),
     from: c.req.query('from'),
     to: c.req.query('to'),
+    page: pageValue.page,
+    limit: pageValue.limit,
   };
   if (filters.service && !validService(filters.service)) return errorResponse('BAD_REQUEST', 'Invalid log service.', 400);
   if ((filters.from && !validDate(filters.from)) || (filters.to && !validDate(filters.to))) return errorResponse('BAD_REQUEST', 'Dates must use YYYY-MM-DD.', 400);
-  const logs = await listLogArchives(c.env, filters);
-  return jsonResponse({ total: logs.length, logs });
+  const result = await listLogArchives(c.env, filters);
+  return jsonResponse({
+    total: result.total,
+    logs: result.logs,
+    pagination: {
+      ...pageValue,
+      total_pages: result.total ? Math.ceil(result.total / pageValue.limit) : 0,
+      has_next: pageValue.page * pageValue.limit < result.total,
+      has_previous: pageValue.page > 1 && result.total > 0,
+    },
+  });
 });
 
 admin.get('/logs/:service/:date', async (c) => {
@@ -197,6 +216,8 @@ admin.post('/logs/upload', async (c) => {
   if (!authorized(c) && uploadKey !== (c.env.LOG_UPLOAD_KEY || adminKey(c.env))) {
     return errorResponse('UNAUTHORIZED', 'Log upload authentication required.', 401);
   }
+  const declaredLength = Number(c.req.header('Content-Length') ?? '0');
+  if (Number.isFinite(declaredLength) && declaredLength > 5 * 1024 * 1024) return errorResponse('PAYLOAD_TOO_LARGE', 'Log upload is too large.', 413);
   let body: { service?: string; date?: string; content?: string };
   try {
     body = await c.req.json();
@@ -206,6 +227,7 @@ admin.post('/logs/upload', async (c) => {
   if (!body.service || !validService(body.service) || !body.date || !validDate(body.date) || typeof body.content !== 'string') {
     return errorResponse('BAD_REQUEST', 'service, date, and content are required.', 400);
   }
+  if (new TextEncoder().encode(body.content).byteLength > 5 * 1024 * 1024) return errorResponse('PAYLOAD_TOO_LARGE', 'Log upload is too large.', 413);
   await replaceLogArchive(c.env, body.service, body.date, body.content);
   return jsonResponse({ success: true, service: body.service, date: body.date, path: `${body.service}/${body.date.slice(0, 4)}/${body.date.slice(5, 7)}/${body.date}.log` });
 });

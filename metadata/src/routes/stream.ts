@@ -18,6 +18,10 @@ function params(row: MediaTitleRow, type: string, extra: Record<string, string |
   return p;
 }
 
+function validPositivePart(value: string | undefined): boolean {
+  return Boolean(value && /^\d+$/.test(value) && Number(value) > 0 && Number(value) <= 10_000);
+}
+
 function shouldProxyStream(url: string, format: string, headers: Record<string, string>): boolean {
   const normalized = format.toLowerCase();
   const isHls = normalized === 'hls' || url.toLowerCase().includes('.m3u8');
@@ -31,8 +35,8 @@ async function proxyStreamUrl(
   url: string,
   headers: Record<string, string>,
 ): Promise<string> {
-  const tokenSecret = c.env.STREAM_PROXY_TOKEN_SECRET || c.env.SUBTITLE_PROXY_TOKEN_SECRET;
-  if (!tokenSecret) return url;
+  const tokenSecret = c.env.STREAM_PROXY_TOKEN_SECRET;
+  if (!tokenSecret) throw new Error('STREAM_PROXY_NOT_CONFIGURED');
   const token = await createStreamProxyToken(tokenSecret, url, headers);
   return `${origin}/v1/proxy/stream?t=${encodeURIComponent(token.token)}`;
 }
@@ -44,7 +48,7 @@ async function proxySubtitle(
 ): Promise<Record<string, unknown> | null> {
   const url = String(subtitle?.url ?? '');
   if (!/^https?:\/\//i.test(url)) return null;
-  const tokenSecret = c.env.SUBTITLE_PROXY_TOKEN_SECRET || c.env.STREAM_PROXY_TOKEN_SECRET;
+  const tokenSecret = c.env.SUBTITLE_PROXY_TOKEN_SECRET;
   if (!tokenSecret) return null;
   try {
     const token = await createSubtitleProxyToken(
@@ -66,9 +70,13 @@ async function proxySubtitle(
 }
 
 async function handle(c: any, type: string, id: string, extra: Record<string, string | undefined>): Promise<Response> {
+  if (type !== 'movie' && type !== 'tv' && type !== 'anime') return errorResponse('INVALID_TYPE', 'Type must be movie, tv, or anime.', 400);
   const row = await getBySpunId(c.env, id);
   if (!row) return errorResponse('INVALID_ID', 'Content not found.', 404);
   if (row.content_type !== type) return errorResponse('BAD_REQUEST', 'Content type mismatch.', 400);
+  if ((type === 'tv' || type === 'anime') && (!validPositivePart(extra.season) || !validPositivePart(extra.episode))) {
+    return errorResponse('INVALID_EPISODE', 'A positive season and episode are required.', 400);
+  }
   if (!c.env.RENDER_BACKEND_URL) return errorResponse('SERVICE_OFFLINE', 'Stream service is not configured yet.', 503);
 
   try {
@@ -108,7 +116,10 @@ async function handle(c: any, type: string, id: string, extra: Record<string, st
       streams,
       subtitles,
     }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.message === 'STREAM_PROXY_NOT_CONFIGURED') {
+      return errorResponse('SERVICE_OFFLINE', 'Stream proxy is not configured.', 503);
+    }
     return errorResponse('SERVICE_OFFLINE', 'Stream service unavailable.', 503);
   }
 }

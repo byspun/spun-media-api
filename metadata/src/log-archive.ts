@@ -12,6 +12,11 @@ export interface ArchivedLog {
   updated_at: string;
 }
 
+export interface ArchivedLogPage {
+  logs: ArchivedLog[];
+  total: number;
+}
+
 function sqlFor(env: Env) {
   return neon(env.NEON_DATABASE_URL);
 }
@@ -57,35 +62,41 @@ export async function replaceLogArchive(
 
 export async function listLogArchives(
   env: Env,
-  filters: { service?: string; from?: string; to?: string },
-): Promise<ArchivedLog[]> {
+  filters: { service?: string; from?: string; to?: string; page?: number; limit?: number },
+): Promise<ArchivedLogPage> {
   const sql = sqlFor(env);
+  const page = Math.max(1, Math.floor(filters.page ?? 1));
+  const limit = Math.min(100, Math.max(1, Math.floor(filters.limit ?? 100)));
+  const offset = (page - 1) * limit;
   const rows = filters.service && validService(filters.service)
     ? await sql`
-        SELECT service, log_date::text AS date, octet_length(content)::int AS size, updated_at::text AS updated_at
+        SELECT service, log_date::text AS date, octet_length(content)::int AS size, updated_at::text AS updated_at, COUNT(*) OVER()::int AS total
         FROM log_archives
         WHERE service = ${filters.service}
           AND (${filters.from ?? null}::date IS NULL OR log_date >= ${filters.from ?? null}::date)
           AND (${filters.to ?? null}::date IS NULL OR log_date <= ${filters.to ?? null}::date)
         ORDER BY log_date DESC
-        LIMIT 1000
+        LIMIT ${limit} OFFSET ${offset}
       `
     : await sql`
-        SELECT service, log_date::text AS date, octet_length(content)::int AS size, updated_at::text AS updated_at
+        SELECT service, log_date::text AS date, octet_length(content)::int AS size, updated_at::text AS updated_at, COUNT(*) OVER()::int AS total
         FROM log_archives
         WHERE (${filters.from ?? null}::date IS NULL OR log_date >= ${filters.from ?? null}::date)
           AND (${filters.to ?? null}::date IS NULL OR log_date <= ${filters.to ?? null}::date)
         ORDER BY log_date DESC, service ASC
-        LIMIT 1000
+        LIMIT ${limit} OFFSET ${offset}
       `;
 
-  return rows.map((row: any) => ({
-    service: row.service as LogService,
-    date: String(row.date),
-    path: archivePath(row.service as LogService, String(row.date)),
-    size: Number(row.size ?? 0),
-    updated_at: String(row.updated_at),
-  }));
+  return {
+    logs: rows.map((row: any) => ({
+      service: row.service as LogService,
+      date: String(row.date),
+      path: archivePath(row.service as LogService, String(row.date)),
+      size: Number(row.size ?? 0),
+      updated_at: String(row.updated_at),
+    })),
+    total: Number((rows[0] as any)?.total ?? 0),
+  };
 }
 
 export async function readLogArchive(

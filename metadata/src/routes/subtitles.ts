@@ -25,7 +25,7 @@ subtitles.get('/:spunId', async (c) => {
   }
 
   const row = await getBySpunId(c.env, spunId);
-  if (!row) return errorResponse('NOT_FOUND', 'Title not found.', 404);
+  if (!row) return errorResponse('INVALID_ID', 'Content not found.', 404);
   if (!c.env.SUBTITLE_PROXY_TOKEN_SECRET || !c.env.SUBDL_API_KEY) {
     return errorResponse('SERVICE_OFFLINE', 'Subtitle delivery is unavailable.', 503);
   }

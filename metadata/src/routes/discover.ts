@@ -36,6 +36,17 @@ import { getDb } from '../db.js';
 
 const discover = new Hono<{ Bindings: Env }>();
 
+function parsePage(value: string | undefined): number | null {
+  if (value === undefined) return 1;
+  if (!/^\d+$/.test(value)) return null;
+  const page = Number(value);
+  return Number.isSafeInteger(page) && page > 0 && page <= 500 ? page : null;
+}
+
+function validDiscoverType(value: string): value is 'all' | 'movie' | 'tv' | 'anime' {
+  return value === 'all' || value === 'movie' || value === 'tv' || value === 'anime';
+}
+
 // ─── Studio discover params builder ──────────────────────────────────────────
 
 interface StudioRow {
@@ -75,8 +86,10 @@ function buildStudioDiscoverParams(
 discover.get('/trending', async (c) => {
   // Note: registered before /:type so "trending" isn't treated as a type param
   const rawType = c.req.query('type') ?? 'all';
-  const page    = parseInt(c.req.query('page') ?? '1');
-  const cacheKey = CacheKeys.trending(rawType);
+  const page = parsePage(c.req.query('page'));
+  if (!validDiscoverType(rawType)) return errorResponse('INVALID_TYPE', 'Type must be all, movie, tv, or anime.', 400);
+  if (page === null) return errorResponse('INVALID_PAGINATION', 'Page must be a positive integer.', 400);
+  const cacheKey = CacheKeys.trending(rawType, page);
   const cached   = await kvGet(c.env, cacheKey);
   if (cached) return jsonResponse(cached);
 
@@ -138,8 +151,10 @@ discover.get('/trending', async (c) => {
 
 discover.get('/popular', async (c) => {
   const rawType = c.req.query('type') ?? 'all';
-  const page    = parseInt(c.req.query('page') ?? '1');
-  const cacheKey = CacheKeys.popular(rawType);
+  const page = parsePage(c.req.query('page'));
+  if (!validDiscoverType(rawType)) return errorResponse('INVALID_TYPE', 'Type must be all, movie, tv, or anime.', 400);
+  if (page === null) return errorResponse('INVALID_PAGINATION', 'Page must be a positive integer.', 400);
+  const cacheKey = CacheKeys.popular(rawType, page);
   const cached   = await kvGet(c.env, cacheKey);
   if (cached) return jsonResponse(cached);
 
@@ -182,8 +197,10 @@ discover.get('/popular', async (c) => {
 
 discover.get('/new', async (c) => {
   const rawType = c.req.query('type') ?? 'all';
-  const page    = parseInt(c.req.query('page') ?? '1');
-  const cacheKey = CacheKeys.newContent(rawType);
+  const page = parsePage(c.req.query('page'));
+  if (!validDiscoverType(rawType)) return errorResponse('INVALID_TYPE', 'Type must be all, movie, tv, or anime.', 400);
+  if (page === null) return errorResponse('INVALID_PAGINATION', 'Page must be a positive integer.', 400);
+  const cacheKey = CacheKeys.newContent(rawType, page);
   const cached   = await kvGet(c.env, cacheKey);
   if (cached) return jsonResponse(cached);
 
@@ -206,7 +223,7 @@ discover.get('/new', async (c) => {
     const type   = (rawType === 'tv' ? 'tv' : 'movie') as 'movie' | 'tv';
     const dateField = type === 'movie' ? 'primary_release_date' : 'first_air_date';
     const raw    = await tmdbDiscover(c.env, type, {
-      sort_by:                   'release_date.desc',
+      sort_by:                   type === 'movie' ? 'primary_release_date.desc' : 'first_air_date.desc',
       [`${dateField}.gte`]:      `${currentYear - 1}-01-01`,
       [`${dateField}.lte`]:      new Date().toISOString().slice(0, 10),
       'vote_count.gte':          50,
@@ -286,7 +303,8 @@ discover.get('/studios', async (c) => {
 
 discover.get('/studio/:studioId', async (c) => {
   const studioId = c.req.param('studioId');
-  const page     = parseInt(c.req.query('page') ?? '1');
+  const page = parsePage(c.req.query('page'));
+  if (page === null) return errorResponse('INVALID_PAGINATION', 'Page must be a positive integer.', 400);
   const cacheKey = CacheKeys.studio(studioId, page);
   const cached   = await kvGet(c.env, cacheKey);
   if (cached) return jsonResponse(cached);
@@ -295,7 +313,7 @@ discover.get('/studio/:studioId', async (c) => {
   const rows = await sql`
     SELECT * FROM studio_ids WHERE spun_studio_id = ${studioId} LIMIT 1
   `;
-  if (!rows.length) return errorResponse('NOT_FOUND', 'Studio not found.', 404);
+  if (!rows.length) return errorResponse('INVALID_ID', 'Studio not found.', 404);
 
   const studio = rows[0] as StudioRow;
   let results:  ContentItem[] = [];
@@ -362,11 +380,12 @@ discover.get('/:type', async (c) => {
   const rawType = c.req.param('type');
   const genre   = c.req.query('genre');
   const studio  = c.req.query('studio');
-  const page    = parseInt(c.req.query('page') ?? '1');
+  const page = parsePage(c.req.query('page'));
 
   if (!['movie', 'tv', 'anime'].includes(rawType)) {
     return errorResponse('INVALID_TYPE', 'Type must be movie, tv, or anime.', 400);
   }
+  if (page === null) return errorResponse('INVALID_PAGINATION', 'Page must be a positive integer.', 400);
 
   const cacheKey = CacheKeys.discover(rawType, genre ?? studio ?? 'all', page);
   const cached   = await kvGet(c.env, cacheKey);

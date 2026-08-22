@@ -30,6 +30,7 @@ import { runDaratechDiagnostic } from './diagnostics.js';
 import { providerLogger, startProviderLogArchiver, flushProviderLogs } from './logging.js';
 
 const app = Fastify({ logger: false, trustProxy: true });
+const PROVIDER_REQUEST_BUDGET_MS = 25_000;
 
 function safeProviderError(error: unknown): string {
   return String(error instanceof Error ? error.message : error ?? 'unknown failure')
@@ -44,8 +45,7 @@ const env = {
   daratechBase: process.env.DARATECH_API_BASE ?? 'https://apimovie.runflix.name.ng/v1',
   daratechKey: process.env.DARATECH_API_KEY ?? '',
   tmdbKey: process.env.TMDB_API_KEY ?? '',
-  diagnosticSecret: process.env.PROVIDER_DIAGNOSTIC_SECRET ?? '',
-  adminKey: process.env.ADMIN_KEY ?? process.env.PROVIDER_DIAGNOSTIC_SECRET ?? '',
+  adminKey: process.env.ADMIN_KEY ?? '',
 };
 
 providerLogger.info('startup', 'Streaming configuration loaded', {
@@ -62,6 +62,7 @@ function auth(request: any): boolean {
 
 function input(q: any): any {
   const type = String(q.type);
+  if (type !== 'movie' && type !== 'tv' && type !== 'anime') throw new Error('invalid_type');
   const movieboxId = q.moviebox_id !== undefined && /^\d+$/.test(String(q.moviebox_id))
     ? String(q.moviebox_id)
     : null;
@@ -100,6 +101,38 @@ function input(q: any): any {
   } as MovieProviderInput & { type: 'movie' };
 }
 
+function validPositiveInteger(value: unknown, max = 10_000): boolean {
+  return Number.isSafeInteger(Number(value)) && Number(value) > 0 && Number(value) <= max;
+}
+
+function validateProviderInput(value: any): string | null {
+  if (!['movie', 'tv', 'anime'].includes(value.type)) return 'invalid_type';
+  if (typeof value.title !== 'string' || value.title.trim().length < 1 || value.title.length > 300) return 'invalid_title';
+  if (value.type === 'anime') {
+    if (!validPositiveInteger(value.anilist_id, 2_000_000_000)) return 'invalid_identifier';
+    if (!validPositiveInteger(value.episode)) return 'invalid_episode';
+  } else {
+    const hasTmdb = validPositiveInteger(value.tmdb_id, 2_000_000_000);
+    const hasMoviebox = typeof value.moviebox_id === 'string' && /^\d{1,30}$/.test(value.moviebox_id);
+    if (!hasTmdb && !hasMoviebox) return 'invalid_identifier';
+    if (value.type === 'tv' && (!validPositiveInteger(value.season) || !validPositiveInteger(value.episode))) return 'invalid_episode';
+  }
+  return null;
+}
+
+async function attemptWithinBudget<T>(fn: () => Promise<T>, remainingMs: number): Promise<T> {
+  if (remainingMs <= 0) throw new Error('provider_deadline');
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      fn(),
+      new Promise<T>((_, reject) => { timer = setTimeout(() => reject(new Error('provider_deadline')), remainingMs); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function movieboxMovieAttempt(value: MovieProviderInput) {
   return getMovieboxMovieStreams(value, {
     baseUrl: env.movieboxBase,
@@ -115,6 +148,7 @@ function movieboxTvAttempt(value: TvProviderInput) {
 }
 
 async function streamFor(value: any): Promise<{ streams: RawStream[]; subtitles: any[] }> {
+  const deadline = Date.now() + PROVIDER_REQUEST_BUDGET_MS;
   const streams: RawStream[] = [];
   let subtitles: any[] = [];
 
@@ -154,13 +188,17 @@ async function streamFor(value: any): Promise<{ streams: RawStream[]; subtitles:
           : []) as Array<[ProviderId, (input: any) => Promise<RawStream[]>]>;
 
   for (const [id, fn] of attempts) {
+    if (Date.now() >= deadline) {
+      providerLogger.warn('fallback', `Provider request budget exhausted category=${value.type}`);
+      break;
+    }
     if (!isHealthy(id, value.type)) {
       providerLogger.debug(id, `Provider suppressed by health tracker category=${value.type}`);
       continue;
     }
 
     try {
-      const result = await fn(value);
+      const result = await attemptWithinBudget(() => fn(value), Math.max(1, deadline - Date.now()));
       if (result.length) {
         recordSuccess(id, value.type);
         providerLogger.info(id, `Provider returned playable streams category=${value.type} count=${result.length}`);
@@ -184,6 +222,7 @@ async function streamFor(value: any): Promise<{ streams: RawStream[]; subtitles:
 }
 
 async function downloadsFor(value: any): Promise<{ downloads: RawDownload[]; subtitles: any[] }> {
+  const deadline = Date.now() + PROVIDER_REQUEST_BUDGET_MS;
   const providers: Array<[string, (input: any) => Promise<RawDownload[]>]> = [
     ['moviebox', (x: any) => getMovieboxDownloads(x, { baseUrl: env.movieboxBase, apiKey: env.movieboxSecret })],
     ['4khdhub', (x: any) => get4khdhubDownloads(x, env.tmdbKey)],
@@ -192,14 +231,25 @@ async function downloadsFor(value: any): Promise<{ downloads: RawDownload[]; sub
   if (value.type === 'movie') providers.splice(2, 0, ['dvdplay', (x: any) => getDvdplayDownloads(x, env.tmdbKey)]);
 
   for (const [id, fn] of providers) {
+    if (Date.now() >= deadline) {
+      providerLogger.warn('fallback', `Download provider request budget exhausted category=${value.type}`);
+      break;
+    }
+    if (!isHealthy(id as ProviderId, value.type)) {
+      providerLogger.debug(id, `Download provider suppressed by health tracker category=${value.type}`);
+      continue;
+    }
     try {
-      const result = await fn(value);
+      const result = await attemptWithinBudget(() => fn(value), Math.max(1, deadline - Date.now()));
       if (result.length) {
+        recordSuccess(id as ProviderId, value.type);
         providerLogger.info(id, `Provider returned downloadable files category=${value.type} count=${result.length}`);
         return { downloads: result, subtitles: [] };
       }
+      recordFailure(id as ProviderId, value.type, 'no usable result');
       providerLogger.warn(id, `Provider returned no downloadable files category=${value.type}`);
     } catch (error) {
+      recordFailure(id as ProviderId, value.type, error);
       providerLogger.error(id, `Provider download request failed category=${value.type}: ${safeProviderError(error)}`);
     }
   }
@@ -278,7 +328,6 @@ app.get('/admin/diagnostics/:provider/:type', async (request, reply) => {
   }
 
   const diagnostic = await runDaratechDiagnostic(type, query, {
-    diagnosticSecret: env.diagnosticSecret,
     daratechBase: env.daratechBase,
     daratechKey: env.daratechKey,
   });
@@ -297,20 +346,41 @@ app.addHook('onResponse', async (request, reply) => {
 app.get('/health', async () => {
   const records = getHealthRecords();
   const degraded = records.some((record) => record.status === 'down');
+  const categoryAvailable = (category: 'movie' | 'tv' | 'anime', configured: boolean): boolean => {
+    if (!configured) return false;
+    const categoryRecords = records.filter((record) => record.content_type === category);
+    return !categoryRecords.length || categoryRecords.some((record) => record.status !== 'down');
+  };
+  const streamingConfigured = Boolean(env.tmdbKey || env.movieboxSecret || env.daratechKey);
+  const downloadsConfigured = Boolean(env.movieboxSecret || env.tmdbKey);
+  const animeConfigured = true;
+  const streaming = categoryAvailable('movie', streamingConfigured) || categoryAvailable('tv', streamingConfigured) || categoryAvailable('anime', animeConfigured);
+  const downloads = categoryAvailable('movie', downloadsConfigured) || categoryAvailable('tv', downloadsConfigured) || categoryAvailable('anime', false);
   return {
     status: degraded ? 'degraded' : 'ok',
-    capabilities: { streaming: true, downloads: true, anime: true },
+    capabilities: { streaming, downloads, anime: animeConfigured },
     content_resolution: { status: degraded ? 'degraded' : 'healthy', checked_at: new Date().toISOString() },
   };
 });
 
 app.get('/stream', async (request, reply) => {
   const q: any = request.query;
-  const value = input(q);
+  let value: any;
+  try {
+    value = input(q);
+  } catch {
+    return reply.code(400).send({
+      code: 'INVALID_TYPE',
+      error: 'Invalid content type',
+      description: 'The provider request type is unsupported.',
+      action: 'Use movie, tv, or anime.',
+    });
+  }
+  const inputError = validateProviderInput(value);
   const identifierValid = value.type === 'anime'
     ? Number.isFinite(value.anilist_id)
     : Number.isFinite(value.tmdb_id) || (typeof value.moviebox_id === 'string' && /^\d+$/.test(value.moviebox_id));
-  if (!value.title || !identifierValid) {
+  if (inputError || !value.title || !identifierValid) {
     return reply.code(400).send({
       code: 'BAD_REQUEST',
       error: 'Malformed request',
@@ -332,8 +402,19 @@ app.get('/stream', async (request, reply) => {
 
 app.get('/download', async (request, reply) => {
   const q: any = request.query;
-  const value = input(q);
-  if (!value.title) {
+  let value: any;
+  try {
+    value = input(q);
+  } catch {
+    return reply.code(400).send({
+      code: 'INVALID_TYPE',
+      error: 'Invalid content type',
+      description: 'The provider request type is unsupported.',
+      action: 'Use movie, tv, or anime.',
+    });
+  }
+  const inputError = validateProviderInput(value);
+  if (inputError || !value.title) {
     return reply.code(400).send({
       code: 'BAD_REQUEST',
       error: 'Malformed request',

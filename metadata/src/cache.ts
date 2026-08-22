@@ -79,9 +79,9 @@ export const CacheKeys = {
   suggestions:      (q: string)                          => `suggest:${q.toLowerCase().replace(/\s+/g, '_')}`,
   discover:         (type: string, genre: string, page: number) =>
                       `discover:${type}:${genre}:${page}`,
-  trending:         (type: string)                       => `trending:${type}`,
-  popular:          (type: string)                       => `popular:${type}`,
-  newContent:       (type: string)                       => `new:${type}`,
+  trending:         (type: string, page: number)        => `trending:${type}:${page}`,
+  popular:          (type: string, page: number)        => `popular:${type}:${page}`,
+  newContent:       (type: string, page: number)        => `new:${type}:${page}`,
   genres:           ()                                   => `genres:list`,
   studios:          ()                                   => `studios:list`,
   studio:           (id: string, page: number)           => `studio:${id}:${page}`,

@@ -12,8 +12,15 @@ import { getBySpunId, resolveFromTmdb, resolveFromAnilist } from '../identity/re
 import { searchTmdb, tmdbFetch } from '../meta/tmdb.js';
 import { getAnilistRecommendations, anilistTitle } from '../meta/anilist.js';
 import { anilistToItem, tmdbResultToItem, jsonResponse, errorResponse } from '../normalizer.js';
+import { metadataLogger } from '../logger.js';
 
 const similar = new Hono<{ Bindings: Env }>();
+
+class SimilarRouteError extends Error {
+  constructor(public readonly code: 'INVALID_ID' | 'INVALID_TYPE') {
+    super(code);
+  }
+}
 
 // ─── TasteDive API ────────────────────────────────────────────────────────────
 
@@ -60,14 +67,14 @@ async function fetchTasteDive(
     });
 
     if (!res.ok) {
-      console.error(`[Similar] TasteDive request failed with status ${res.status}`);
+      metadataLogger(env).warn('similar', `TasteDive request failed status=${res.status}`);
       return [];
     }
 
     const data = await res.json() as TasteDiveResponse;
     return data?.similar?.results?.filter((result) => Boolean(result?.name)) ?? [];
   } catch (err) {
-    console.error('[Similar] TasteDive request failed:', err);
+    metadataLogger(env).warn('similar', 'TasteDive request failed', err);
     return [];
   }
 }
@@ -98,7 +105,7 @@ async function tasteDiveToItem(
     const row = await resolveFromTmdb(env, match.id, mediaType, title);
     return tmdbResultToItem(match, row.spun_id, mediaType);
   } catch (err) {
-    console.error(`[Similar] Recommendation resolution failed for ${result.name}:`, err);
+    metadataLogger(env).warn('similar', `Recommendation resolution failed title=${result.name}`, err);
     return null;
   }
 }
@@ -115,8 +122,8 @@ async function movieOrTvSimilar(
   contentType: 'movie' | 'tv'
 ): Promise<{ results: ContentItem[] }> {
   const row = await getBySpunId(env, spunId);
-  if (!row) throw new Error('NOT_FOUND');
-  if (row.content_type !== contentType) throw new Error('INVALID_TYPE');
+  if (!row) throw new SimilarRouteError('INVALID_ID');
+  if (row.content_type !== contentType) throw new SimilarRouteError('INVALID_TYPE');
 
   const tasteType: TasteDiveType = contentType === 'movie' ? 'movie' : 'show';
   const tasteResults = await fetchTasteDive(env, row.title, tasteType);
@@ -164,13 +171,13 @@ similar.get('/movie/:spunId', async (c) => {
     await kvSet(c.env, cacheKey, payload, TTL.metadata);
     return jsonResponse(payload);
   } catch (err) {
-    if (err instanceof Error && err.message === 'NOT_FOUND') {
-      return errorResponse('NOT_FOUND', 'Title not found.', 404);
+    if (err instanceof SimilarRouteError && err.code === 'INVALID_ID') {
+      return errorResponse('INVALID_ID', 'Content not found.', 404);
     }
-    if (err instanceof Error && err.message === 'INVALID_TYPE') {
+    if (err instanceof SimilarRouteError && err.code === 'INVALID_TYPE') {
       return errorResponse('INVALID_TYPE', 'This endpoint is for movies only.', 400);
     }
-    console.error('[Similar] Movie endpoint failed:', err);
+    metadataLogger(c.env).error('similar', 'Movie similarity endpoint failed', err);
     return errorResponse('UPSTREAM_ERROR', 'Could not retrieve similar titles.', 502);
   }
 });
@@ -188,13 +195,13 @@ similar.get('/tv/:spunId', async (c) => {
     await kvSet(c.env, cacheKey, payload, TTL.metadata);
     return jsonResponse(payload);
   } catch (err) {
-    if (err instanceof Error && err.message === 'NOT_FOUND') {
-      return errorResponse('NOT_FOUND', 'Title not found.', 404);
+    if (err instanceof SimilarRouteError && err.code === 'INVALID_ID') {
+      return errorResponse('INVALID_ID', 'Content not found.', 404);
     }
-    if (err instanceof Error && err.message === 'INVALID_TYPE') {
+    if (err instanceof SimilarRouteError && err.code === 'INVALID_TYPE') {
       return errorResponse('INVALID_TYPE', 'This endpoint is for TV shows only.', 400);
     }
-    console.error('[Similar] TV endpoint failed:', err);
+    metadataLogger(c.env).error('similar', 'TV similarity endpoint failed', err);
     return errorResponse('UPSTREAM_ERROR', 'Could not retrieve similar titles.', 502);
   }
 });
