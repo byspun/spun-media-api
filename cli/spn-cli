@@ -3,7 +3,7 @@
 # Standalone Bash client for the Spün Media API.
 # Requires: curl, jq
 
-set -u
+set -euo pipefail
 
 CONFIG_FILE="${SPN_CONFIG_FILE:-$HOME/.spn.env}"
 SCRIPT_NAME="spn"
@@ -66,6 +66,15 @@ require_internal_config() {
 
 trim_slash() {
   printf '%s' "${1%/}"
+}
+
+cancel_if_requested() {
+  case "${1:-}" in
+    :q|:quit)
+      printf 'Operation cancelled.\n' >&2
+      exit 130
+      ;;
+  esac
 }
 
 urlencode() {
@@ -143,27 +152,32 @@ Spün Media API Configuration
 EOF
     local choice value variable
     read -r -p 'Select a variable by entering its number: ' choice
+    cancel_if_requested "$choice"
     case "$choice" in
       1)
         read -r -p 'Worker API URL: ' value
+        cancel_if_requested "$value"
         [[ -n "$value" ]] || { printf 'Error: Worker API URL is required.\n'; continue; }
         write_config_value SPN_API_BASE_URL "$(trim_slash "$value")"
         SPN_API_BASE_URL="$(trim_slash "$value")"
         ;;
       2)
         read -r -s -p 'X-ADMIN-KEY: ' value; printf '\n'
+        cancel_if_requested "$value"
         [[ -n "$value" ]] || { printf 'Error: Admin key is required.\n'; continue; }
         write_config_value SPN_ADMIN_KEY "$value"
         SPN_ADMIN_KEY="$value"
         ;;
       3)
         read -r -p 'Render API URL: ' value
+        cancel_if_requested "$value"
         [[ -n "$value" ]] || { printf 'Error: Render API URL is required.\n'; continue; }
         write_config_value SPN_RENDER_BASE_URL "$(trim_slash "$value")"
         SPN_RENDER_BASE_URL="$(trim_slash "$value")"
         ;;
       4)
         read -r -s -p 'X-INTERNALS-KEY: ' value; printf '\n'
+        cancel_if_requested "$value"
         [[ -n "$value" ]] || { printf 'Error: Internals key is required.\n'; continue; }
         write_config_value SPN_INTERNALS_KEY "$value"
         SPN_INTERNALS_KEY="$value"
@@ -177,6 +191,7 @@ EOF
         ;;
       6)
         read -r -p 'Variable to clear [1-4]: ' variable
+        cancel_if_requested "$variable"
         case "$variable" in
           1) write_config_value SPN_API_BASE_URL '' ; SPN_API_BASE_URL='' ;;
           2) write_config_value SPN_ADMIN_KEY '' ; SPN_ADMIN_KEY='' ;;
@@ -195,6 +210,7 @@ prompt_required() {
   local label="$1" value
   while true; do
     read -r -p "$label: " value
+    cancel_if_requested "$value"
     if [[ -n "${value//[[:space:]]/}" ]]; then
       printf '%s' "$value"
       return 0
@@ -207,6 +223,7 @@ prompt_secret_required() {
   local label="$1" value
   while true; do
     read -r -s -p "$label: " value; printf '\n' >&2
+    cancel_if_requested "$value"
     if [[ -n "${value//[[:space:]]/}" ]]; then
       printf '%s' "$value"
       return 0
@@ -218,6 +235,7 @@ prompt_secret_required() {
 prompt_optional() {
   local label="$1" value
   read -r -p "$label [optional]: " value
+  cancel_if_requested "$value"
   printf '%s' "$value"
 }
 
@@ -225,6 +243,7 @@ prompt_number() {
   local label="$1" value
   while true; do
     read -r -p "$label: " value
+    cancel_if_requested "$value"
     if [[ "$value" =~ ^[0-9]+$ ]] && ((value > 0)); then
       printf '%s' "$value"
       return 0
@@ -237,6 +256,7 @@ prompt_type() {
   local value
   while true; do
     read -r -p 'Type [movie/tv/anime]: ' value
+    cancel_if_requested "$value"
     case "$value" in
       movie|tv|anime) printf '%s' "$value"; return 0 ;;
       *) printf 'Error: Type must be movie, tv, or anime.\n' >&2 ;;
@@ -248,6 +268,7 @@ prompt_home_type() {
   local value
   while true; do
     read -r -p 'Type [all/movie/tv/anime]: ' value
+    cancel_if_requested "$value"
     case "$value" in
       all|movie|tv|anime) printf '%s' "$value"; return 0 ;;
       *) printf 'Error: Type must be all, movie, tv, or anime.\n' >&2 ;;
@@ -259,6 +280,7 @@ prompt_date() {
   local value
   while true; do
     read -r -p 'Date [YYYY-MM-DD]: ' value
+    cancel_if_requested "$value"
     if [[ "$value" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
       printf '%s' "$value"
       return 0
@@ -271,6 +293,7 @@ confirm_action() {
   local prompt="$1" value
   if [[ "${CONFIRM:-false}" == true ]]; then return 0; fi
   read -r -p "$prompt Type CONFIRM to continue: " value
+  cancel_if_requested "$value"
   [[ "$value" == CONFIRM ]] || runtime_error 'Action cancelled.'
 }
 
@@ -321,8 +344,12 @@ request() {
     printf 'Network error while requesting %s.\n' "$url" >&2
     exit 4
   fi
-  format_response "$tmp" "$status"
-  local result=$?
+  local result
+  if format_response "$tmp" "$status"; then
+    result=0
+  else
+    result=$?
+  fi
   rm -f "$tmp" "${tmp}.headers"
   if [[ "$status" =~ ^[0-9]{3}$ ]] && [[ ! "$status" =~ ^2 ]]; then
     printf 'HTTP %s\n' "$status" >&2
@@ -391,6 +418,10 @@ Group help:
 Command help:
   spn search --help
   spn admin --help
+
+Prompt controls:
+  :q       Cancel the current operation
+  Ctrl+C   Emergency exit
 EOF
 }
 
@@ -425,6 +456,8 @@ spn search --suggestions
   Prompt for a query and retrieve suggestions.
 spn search [above command] --params
   Prompt for optional page and supported query parameters.
+
+Enter :q at any prompt to cancel the operation.
 EOF
       ;;
     --info)
@@ -1118,8 +1151,11 @@ body_account_create() {
   local auth_subject email name status
   auth_subject="$(prompt_required 'Auth subject')"
   read -r -p 'Email [optional]: ' email
+  cancel_if_requested "$email"
   read -r -p 'Name [optional]: ' name
+  cancel_if_requested "$name"
   read -r -p 'Status [active]: ' status
+  cancel_if_requested "$status"
   status="${status:-active}"
   jq -nc --arg auth_subject "$auth_subject" --arg email "$email" --arg name "$name" --arg status "$status" '{auth_subject:$auth_subject,email:($email|if length==0 then null else . end),name:($name|if length==0 then null else . end),status:$status}'
 }
@@ -1128,6 +1164,7 @@ body_key_generate() {
   local label expires
   label="$(prompt_required Label)"
   read -r -p 'Expires at [optional; blank means never/policy default]: ' expires
+  cancel_if_requested "$expires"
   jq -nc --arg label "$label" --arg expires "$expires" '{label:$label,expires_at:($expires|if length==0 then null else . end)}'
 }
 
@@ -1151,6 +1188,7 @@ run_account() {
     keys) path='account/keys/list'; if [[ "$PARAMS" == true ]]; then status="$(prompt_optional Status)"; page="$(prompt_optional Page)"; limit="$(prompt_optional Limit)"; path="$(append_query "$path" status "$status")"; path="$(append_query "$path" page "$page")"; path="$(append_query "$path" limit "$limit")"; fi; request GET "$path" admin ;;
     key)
       read -r -p 'Action [get/generate/revoke]: ' mode
+      cancel_if_requested "$mode"
       case "$mode" in
         get) id="$(prompt_required 'Key ID')"; request GET "account/keys/$(urlencode "$id")" admin ;;
         generate) body="$(body_key_generate)"; request POST account/keys/gen admin "$body" ;;
@@ -1192,7 +1230,7 @@ run_admin() {
       esac
       ;;
     cache) [[ "$submode" == clear || -z "$submode" ]] || usage_error 'Unknown cache action.'; confirm_action 'Clear API cache?'; request POST admin/cache/clear admin ;;
-    franchise) [[ "$submode" == register ]] || usage_error 'Use --register/register for administrative franchise registration.'; read -r -p 'Franchise reference [optional]: ' id; path=admin/franchise/register; [[ -n "$id" ]] && path="$(append_query "$path" id "$id")"; confirm_action 'Register franchise?'; request POST "$path" admin ;;
+    franchise) [[ "$submode" == register ]] || usage_error 'Use --register/register for administrative franchise registration.'; read -r -p 'Franchise reference [optional]: ' id; cancel_if_requested "$id"; path=admin/franchise/register; [[ -n "$id" ]] && path="$(append_query "$path" id "$id")"; confirm_action 'Register franchise?'; request POST "$path" admin ;;
     diagnostics) provider="$(prompt_required Provider)"; type="$(prompt_type)"; title="$(prompt_required Title)"; path="admin/diagnostics/$(urlencode "$provider")/$type?title=$(urlencode "$title")"; request GET "$path" admin ;;
     logs)
       case "$submode" in
@@ -1216,7 +1254,7 @@ run_admin() {
       if [[ "$submode" == create ]]; then body="$(body_account_create)"; request POST admin/accounts/create admin "$body";
       elif [[ "$submode" == keys || "$submode" == list || "$submode" == generate ]]; then
         account_id="$(prompt_required 'Account ID')"
-        if [[ "$submode" == keys ]]; then read -r -p 'Key action [list/generate]: ' submode; fi
+        if [[ "$submode" == keys ]]; then read -r -p 'Key action [list/generate]: ' submode; cancel_if_requested "$submode"; fi
         case "$submode" in
           list) path="admin/accounts/$(urlencode "$account_id")/keys/list"; if [[ "$PARAMS" == true ]]; then page="$(prompt_optional Page)"; limit="$(prompt_optional Limit)"; path="$(append_query "$path" page "$page")"; path="$(append_query "$path" limit "$limit")"; fi; request GET "$path" admin ;;
           generate) body="$(body_key_generate)"; request POST "admin/accounts/$(urlencode "$account_id")/keys/gen" admin "$body" ;;
