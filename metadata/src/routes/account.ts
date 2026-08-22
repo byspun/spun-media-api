@@ -13,7 +13,7 @@ import {
   upsertAccount,
   countActiveKeys,
 } from '../../../account/store.js';
-import { policyFromEnv } from '../../../account/policy.js';
+import { defaultApiKeyExpiry, policyFromEnv } from '../../../account/policy.js';
 
 const account = new Hono<AccountHonoEnv>();
 
@@ -76,12 +76,13 @@ account.post('/keys/gen', async (c) => {
   if (bodyValue instanceof Response) return bodyValue;
   if (typeof bodyValue.label !== 'string' || !bodyValue.label.trim() || bodyValue.label.trim().length > 100) return errorResponse('INVALID_KEY_LABEL', 'A valid key label is required.', 400);
   if (bodyValue.expires_at !== undefined && bodyValue.expires_at !== null && typeof bodyValue.expires_at !== 'string') return errorResponse('INVALID_KEY_EXPIRY', 'Invalid key expiry.', 400);
-  const expiryValue = typeof bodyValue.expires_at === 'string' ? parseExpiry(bodyValue.expires_at) : null;
-  if (expiryValue instanceof Response) return expiryValue;
+  const requestedExpiry = typeof bodyValue.expires_at === 'string' ? parseExpiry(bodyValue.expires_at) : null;
+  if (requestedExpiry instanceof Response) return requestedExpiry;
   const sql = getDb(c.env);
   const accountRecord = await getAccountById(sql, session.accountId);
   if (!accountRecord) return errorResponse('ACCOUNT_NOT_FOUND', 'Account not found.', 404);
   const policy = policyFromEnv(c.env as unknown as Record<string, unknown>);
+  const expiryValue = requestedExpiry ?? defaultApiKeyExpiry(policy);
   if (policy.plansEnabled) {
     const activeKeys = await countActiveKeys(sql, session.accountId);
     const limitRows = await sql`SELECT p.api_key_limit FROM public.subscriptions s JOIN public.plans p ON p.id = s.plan_id WHERE s.account_id = ${session.accountId} AND s.status IN ('trialing', 'active') AND now() < s.current_period_end ORDER BY s.current_period_end DESC LIMIT 1`;

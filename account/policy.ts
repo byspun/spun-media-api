@@ -24,3 +24,13 @@ export function commercialEnforcementEnabled(policy: PlanPolicy): boolean {
   return policy.billingEnabled || policy.subscriptionsEnabled || policy.plansEnabled
     || policy.quotaMode !== 'off' || policy.rateLimitMode !== 'off';
 }
+
+/**
+ * Returns the default expiry for a newly generated key.
+ * Existing rows are never changed here, so keys created while enforcement was
+ * disabled remain grandfathered when enforcement is later enabled.
+ */
+export function defaultApiKeyExpiry(policy: PlanPolicy, now = Date.now()): string | null {
+  if (!commercialEnforcementEnabled(policy)) return null;
+  return new Date(now + 30 * 24 * 60 * 60 * 1000).toISOString();
+}

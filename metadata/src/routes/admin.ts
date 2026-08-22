@@ -15,6 +15,8 @@ import { metadataLogger } from '../logger.js';
 import { getDb } from '../db.js';
 import { createApiKey, getAccountById, getApiKeyById, listApiKeys, revokeApiKey } from '../../../account/store.js';
 import { createLocalUser } from '../../../account/users/service.js';
+import { isValidAccountEmail } from '../../../account/validation.js';
+import { defaultApiKeyExpiry, policyFromEnv } from '../../../account/policy.js';
 
 const admin = new Hono<{ Bindings: Env }>();
 
@@ -274,7 +276,7 @@ admin.post('/accounts/create', async (c) => {
   if (!authSubject) return errorResponse('AUTH_SUBJECT_REQUIRED', 'Authentication subject is required.', 400);
   const email = bodyValue.email === undefined || bodyValue.email === null ? null : typeof bodyValue.email === 'string' ? bodyValue.email.trim() || null : null;
   if (bodyValue.email !== undefined && bodyValue.email !== null && typeof bodyValue.email !== 'string') return errorResponse('ACCOUNT_EMAIL_INVALID', 'Account email is invalid.', 400);
-  if (email && !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)) return errorResponse('ACCOUNT_EMAIL_INVALID', 'Account email is invalid.', 400);
+  if (email && !isValidAccountEmail(email)) return errorResponse('ACCOUNT_EMAIL_INVALID', 'Account email is invalid.', 400);
   const name = bodyValue.name === undefined || bodyValue.name === null ? null : typeof bodyValue.name === 'string' ? bodyValue.name.trim() || null : null;
   if (bodyValue.name !== undefined && bodyValue.name !== null && typeof bodyValue.name !== 'string') return errorResponse('BAD_REQUEST', 'Account name is invalid.', 400);
   const status = bodyValue.status === undefined ? 'active' : bodyValue.status;
@@ -307,8 +309,9 @@ admin.post('/accounts/:accountId/keys/gen', async (c) => {
   const bodyValue = await readJson(c);
   if (bodyValue instanceof Response) return bodyValue;
   if (typeof bodyValue.label !== 'string' || !bodyValue.label.trim() || bodyValue.label.trim().length > 100) return errorResponse('INVALID_KEY_LABEL', 'A valid key label is required.', 400);
-  const expiry = isoFuture(bodyValue.expires_at);
-  if (expiry instanceof Response) return expiry;
+  const requestedExpiry = isoFuture(bodyValue.expires_at);
+  if (requestedExpiry instanceof Response) return requestedExpiry;
+  const expiry = requestedExpiry ?? defaultApiKeyExpiry(policyFromEnv(c.env as unknown as Record<string, unknown>));
   try {
     const created = await createApiKey(getDb(c.env), accountId, bodyValue.label.trim(), expiry);
     return jsonResponse({ success: true, message: 'API key generated successfully. Copy it now; it will not be shown again.', api_key: { ...created.record, key: created.key } }, 201);

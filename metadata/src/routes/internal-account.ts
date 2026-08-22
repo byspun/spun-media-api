@@ -4,6 +4,7 @@ import { requireInternal } from '../account-auth.js';
 import { getDb } from '../db.js';
 import { errorResponse, jsonResponse } from '../normalizer.js';
 import { syncUserAccount } from '../../../account/users/service.js';
+import { isValidAccountEmail } from '../../../account/validation.js';
 
 const internalAccount = new Hono<AccountHonoEnv>();
 
@@ -23,6 +24,7 @@ internalAccount.put('/:authSubject', async (c) => {
   }
 
   if (body.email !== undefined && body.email !== null && typeof body.email !== 'string') return errorResponse('ACCOUNT_EMAIL_INVALID', 'Account email is invalid.', 400);
+  if (typeof body.email === 'string' && body.email.trim() && !isValidAccountEmail(body.email.trim())) return errorResponse('ACCOUNT_EMAIL_INVALID', 'Account email is invalid.', 400);
   if (body.name !== undefined && body.name !== null && typeof body.name !== 'string') return errorResponse('BAD_REQUEST', 'Account name is invalid.', 400);
   if (body.status !== undefined && body.status !== 'active' && body.status !== 'closed') return errorResponse('BAD_REQUEST', 'Account status is invalid.', 400);
 
