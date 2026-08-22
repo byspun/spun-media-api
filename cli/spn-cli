@@ -307,7 +307,7 @@ request() {
   url="${base}/${path#/}"
   tmp="$(mktemp)"
   local -a args
-  args=(-sS -X "$method" "$url" -H 'Accept: application/json, text/plain;q=0.9')
+  args=(-sS -L --max-redirs 5 --proto '=http,https' --proto-redir '=https' -X "$method" "$url" -H 'Accept: application/json, text/plain;q=0.9')
   case "$auth" in
     admin) args+=(-H "X-Admin-Key: $SPN_ADMIN_KEY") ;;
     internal) args+=(-H "X-Internals-Key: $SPN_INTERNALS_KEY") ;;
