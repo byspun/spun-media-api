@@ -1,0 +1,1347 @@
+#!/usr/bin/env bash
+# Spün Media API CLI
+# Standalone Bash client for the Spün Media API.
+# Requires: curl, jq
+
+set -u
+
+CONFIG_FILE="${SPN_CONFIG_FILE:-$HOME/.spn.env}"
+SCRIPT_NAME="spn"
+
+# Configuration values are loaded after help/config handling so those commands
+# remain usable before the CLI has been configured.
+SPN_API_BASE_URL=""
+SPN_ADMIN_KEY=""
+SPN_RENDER_BASE_URL=""
+SPN_INTERNALS_KEY=""
+
+load_config() {
+  if [[ -f "$CONFIG_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$CONFIG_FILE"
+  fi
+  SPN_API_BASE_URL="${SPN_API_BASE_URL:-}"
+  SPN_ADMIN_KEY="${SPN_ADMIN_KEY:-}"
+  SPN_RENDER_BASE_URL="${SPN_RENDER_BASE_URL:-}"
+  SPN_INTERNALS_KEY="${SPN_INTERNALS_KEY:-}"
+}
+
+usage_error() {
+  printf 'Error: %s\n' "$1" >&2
+  exit 2
+}
+
+runtime_error() {
+  printf 'Error: %s\n' "$1" >&2
+  exit 1
+}
+
+require_dependency() {
+  command -v "$1" >/dev/null 2>&1 || runtime_error "$1 is required. Install it in Termux first."
+}
+
+require_worker_url() {
+  [[ -n "$SPN_API_BASE_URL" ]] || { printf 'Worker API URL is not configured.\nRun: %s config\n' "$SCRIPT_NAME" >&2; exit 3; }
+}
+
+require_base_config() {
+  local missing=()
+  [[ -n "$SPN_API_BASE_URL" ]] || missing+=("SPN_API_BASE_URL")
+  [[ -n "$SPN_ADMIN_KEY" ]] || missing+=("SPN_ADMIN_KEY")
+  if ((${#missing[@]})); then
+    printf 'Configuration incomplete.\nMissing: %s\nRun: %s config\n' "${missing[*]}" "$SCRIPT_NAME" >&2
+    exit 3
+  fi
+}
+
+require_internal_config() {
+  local missing=()
+  [[ -n "$SPN_RENDER_BASE_URL" ]] || missing+=("SPN_RENDER_BASE_URL")
+  [[ -n "$SPN_INTERNALS_KEY" ]] || missing+=("SPN_INTERNALS_KEY")
+  if ((${#missing[@]})); then
+    printf 'Internal configuration incomplete.\nMissing: %s\nRun: %s config\n' "${missing[*]}" "$SCRIPT_NAME" >&2
+    exit 3
+  fi
+}
+
+trim_slash() {
+  printf '%s' "${1%/}"
+}
+
+urlencode() {
+  jq -rn --arg value "$1" '$value|@uri'
+}
+
+mask_secret() {
+  local value="$1"
+  if [[ -z "$value" ]]; then
+    printf '[not configured]'
+  elif ((${#value} <= 4)); then
+    printf 'configured'
+  else
+    printf 'configured (%s...)' "${value:0:4}"
+  fi
+}
+
+write_config_value() {
+  local name="$1" value="$2" tmp line replaced=false escaped
+  mkdir -p "$(dirname "$CONFIG_FILE")"
+  touch "$CONFIG_FILE"
+  chmod 600 "$CONFIG_FILE"
+  tmp="${CONFIG_FILE}.tmp.$$"
+  printf -v escaped '%q' "$value"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "$name="* ]]; then
+      printf '%s=%s\n' "$name" "$escaped" >> "$tmp"
+      replaced=true
+    else
+      printf '%s\n' "$line" >> "$tmp"
+    fi
+  done < "$CONFIG_FILE"
+  if [[ "$replaced" != true ]]; then
+    printf '%s=%s\n' "$name" "$escaped" >> "$tmp"
+  fi
+  mv "$tmp" "$CONFIG_FILE"
+  chmod 600 "$CONFIG_FILE"
+  printf 'Saved.\n'
+}
+
+clear_config_value() {
+  local name="$1" tmp
+  [[ -f "$CONFIG_FILE" ]] || return 0
+  tmp="${CONFIG_FILE}.tmp.$$"
+  awk -v key="$name" '$0 !~ "^" key "=" { print }' "$CONFIG_FILE" > "$tmp" && mv "$tmp" "$CONFIG_FILE"
+  chmod 600 "$CONFIG_FILE"
+  printf 'Removed.\n'
+}
+
+config_status() {
+  case "$1" in
+    SPN_API_BASE_URL) [[ -n "$SPN_API_BASE_URL" ]] && printf '%s' "$SPN_API_BASE_URL" || printf '[not configured]' ;;
+    SPN_ADMIN_KEY) mask_secret "$SPN_ADMIN_KEY" ;;
+    SPN_RENDER_BASE_URL) [[ -n "$SPN_RENDER_BASE_URL" ]] && printf '%s' "$SPN_RENDER_BASE_URL" || printf '[not configured]' ;;
+    SPN_INTERNALS_KEY) mask_secret "$SPN_INTERNALS_KEY" ;;
+  esac
+}
+
+config_menu() {
+  load_config
+  while true; do
+    cat <<EOF
+
+Spün Media API Configuration
+────────────────────────────
+
+1. Worker API URL          $(config_status SPN_API_BASE_URL)
+2. Admin key               $(config_status SPN_ADMIN_KEY)
+3. Render API URL          $(config_status SPN_RENDER_BASE_URL)
+4. Internals key           $(config_status SPN_INTERNALS_KEY)
+5. View configuration
+6. Clear a variable
+7. Exit
+
+EOF
+    local choice value variable
+    read -r -p 'Select a variable by entering its number: ' choice
+    case "$choice" in
+      1)
+        read -r -p 'Worker API URL: ' value
+        [[ -n "$value" ]] || { printf 'Error: Worker API URL is required.\n'; continue; }
+        write_config_value SPN_API_BASE_URL "$(trim_slash "$value")"
+        SPN_API_BASE_URL="$(trim_slash "$value")"
+        ;;
+      2)
+        read -r -s -p 'X-ADMIN-KEY: ' value; printf '\n'
+        [[ -n "$value" ]] || { printf 'Error: Admin key is required.\n'; continue; }
+        write_config_value SPN_ADMIN_KEY "$value"
+        SPN_ADMIN_KEY="$value"
+        ;;
+      3)
+        read -r -p 'Render API URL: ' value
+        [[ -n "$value" ]] || { printf 'Error: Render API URL is required.\n'; continue; }
+        write_config_value SPN_RENDER_BASE_URL "$(trim_slash "$value")"
+        SPN_RENDER_BASE_URL="$(trim_slash "$value")"
+        ;;
+      4)
+        read -r -s -p 'X-INTERNALS-KEY: ' value; printf '\n'
+        [[ -n "$value" ]] || { printf 'Error: Internals key is required.\n'; continue; }
+        write_config_value SPN_INTERNALS_KEY "$value"
+        SPN_INTERNALS_KEY="$value"
+        ;;
+      5)
+        printf '\nCurrent configuration:\n\n'
+        printf '1. Worker API URL          %s\n' "$(config_status SPN_API_BASE_URL)"
+        printf '2. Admin key               %s\n' "$(config_status SPN_ADMIN_KEY)"
+        printf '3. Render API URL          %s\n' "$(config_status SPN_RENDER_BASE_URL)"
+        printf '4. Internals key           %s\n\n' "$(config_status SPN_INTERNALS_KEY)"
+        ;;
+      6)
+        read -r -p 'Variable to clear [1-4]: ' variable
+        case "$variable" in
+          1) write_config_value SPN_API_BASE_URL '' ; SPN_API_BASE_URL='' ;;
+          2) write_config_value SPN_ADMIN_KEY '' ; SPN_ADMIN_KEY='' ;;
+          3) write_config_value SPN_RENDER_BASE_URL '' ; SPN_RENDER_BASE_URL='' ;;
+          4) write_config_value SPN_INTERNALS_KEY '' ; SPN_INTERNALS_KEY='' ;;
+          *) printf 'Error: Choose a variable from 1 to 4.\n' ;;
+        esac
+        ;;
+      7) printf 'Configuration saved to %s.\n' "$CONFIG_FILE"; return 0 ;;
+      *) printf 'Error: Choose an option from 1 to 7.\n' ;;
+    esac
+  done
+}
+
+prompt_required() {
+  local label="$1" value
+  while true; do
+    read -r -p "$label: " value
+    if [[ -n "${value//[[:space:]]/}" ]]; then
+      printf '%s' "$value"
+      return 0
+    fi
+    printf 'Error: %s is required.\n' "$label" >&2
+  done
+}
+
+prompt_secret_required() {
+  local label="$1" value
+  while true; do
+    read -r -s -p "$label: " value; printf '\n' >&2
+    if [[ -n "${value//[[:space:]]/}" ]]; then
+      printf '%s' "$value"
+      return 0
+    fi
+    printf 'Error: %s is required.\n' "$label" >&2
+  done
+}
+
+prompt_optional() {
+  local label="$1" value
+  read -r -p "$label [optional]: " value
+  printf '%s' "$value"
+}
+
+prompt_number() {
+  local label="$1" value
+  while true; do
+    read -r -p "$label: " value
+    if [[ "$value" =~ ^[0-9]+$ ]] && ((value > 0)); then
+      printf '%s' "$value"
+      return 0
+    fi
+    printf 'Error: %s must be a positive integer.\n' "$label" >&2
+  done
+}
+
+prompt_type() {
+  local value
+  while true; do
+    read -r -p 'Type [movie/tv/anime]: ' value
+    case "$value" in
+      movie|tv|anime) printf '%s' "$value"; return 0 ;;
+      *) printf 'Error: Type must be movie, tv, or anime.\n' >&2 ;;
+    esac
+  done
+}
+
+prompt_home_type() {
+  local value
+  while true; do
+    read -r -p 'Type [all/movie/tv/anime]: ' value
+    case "$value" in
+      all|movie|tv|anime) printf '%s' "$value"; return 0 ;;
+      *) printf 'Error: Type must be all, movie, tv, or anime.\n' >&2 ;;
+    esac
+  done
+}
+
+prompt_date() {
+  local value
+  while true; do
+    read -r -p 'Date [YYYY-MM-DD]: ' value
+    if [[ "$value" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+      printf '%s' "$value"
+      return 0
+    fi
+    printf 'Error: Date must use YYYY-MM-DD.\n' >&2
+  done
+}
+
+confirm_action() {
+  local prompt="$1" value
+  if [[ "${CONFIRM:-false}" == true ]]; then return 0; fi
+  read -r -p "$prompt Type CONFIRM to continue: " value
+  [[ "$value" == CONFIRM ]] || runtime_error 'Action cancelled.'
+}
+
+format_response() {
+  local file="$1" status="$2" content_type body
+  content_type="$(grep -i '^content-type:' "$file.headers" 2>/dev/null | tail -1 | tr -d '\r' || true)"
+  body="$(cat "$file")"
+  if [[ "$status" =~ ^2 ]]; then
+    if [[ "$content_type" == *text/plain* ]]; then
+      printf '%s\n' "$body"
+    elif jq empty >/dev/null 2>&1 <<<"$body"; then
+      if [[ "${RAW:-false}" == true ]]; then printf '%s\n' "$body"; else jq . <<<"$body"; fi
+    else
+      printf '%s\n' "$body"
+    fi
+    return 0
+  fi
+
+  if jq empty >/dev/null 2>&1 <<<"$body"; then jq . <<<"$body"; else printf '%s\n' "$body"; fi
+  return 1
+}
+
+request() {
+  local method="$1" path="$2" auth="${3:-admin}" body="${4:-}" base url tmp status
+  case "$auth" in
+    admin) base="$(trim_slash "$SPN_API_BASE_URL")" ;;
+    none) base="$(trim_slash "$SPN_API_BASE_URL")" ;;
+    internal) base="$(trim_slash "$SPN_RENDER_BASE_URL")" ;;
+    *) usage_error 'Unknown authentication mode.' ;;
+  esac
+  if [[ "$auth" != internal && "$path" == /v1/* && "$base" == */v1 ]]; then
+    path="${path#/v1/}"
+  fi
+  url="${base}/${path#/}"
+  tmp="$(mktemp)"
+  local -a args
+  args=(-sS -X "$method" "$url" -H 'Accept: application/json, text/plain;q=0.9')
+  case "$auth" in
+    admin) args+=(-H "X-Admin-Key: $SPN_ADMIN_KEY") ;;
+    internal) args+=(-H "X-Internals-Key: $SPN_INTERNALS_KEY") ;;
+    none) : ;;
+  esac
+  if [[ -n "$body" ]]; then
+    args+=(-H 'Content-Type: application/json' --data "$body")
+  fi
+  if ! status="$(curl "${args[@]}" -o "$tmp" -D "${tmp}.headers" -w '%{http_code}')"; then
+    rm -f "$tmp" "${tmp}.headers"
+    printf 'Network error while requesting %s.\n' "$url" >&2
+    exit 4
+  fi
+  format_response "$tmp" "$status"
+  local result=$?
+  rm -f "$tmp" "${tmp}.headers"
+  if [[ "$status" =~ ^[0-9]{3}$ ]] && [[ ! "$status" =~ ^2 ]]; then
+    printf 'HTTP %s\n' "$status" >&2
+    return 1
+  fi
+  return "$result"
+}
+
+parse_params_flag() {
+  PARAMS=false
+  CONFIRM=false
+  RAW=false
+  while (($#)); do
+    case "$1" in
+      --params) PARAMS=true ;;
+      --confirm) CONFIRM=true ;;
+      --raw) RAW=true ;;
+      --help) return 10 ;;
+      --*) usage_error "Unknown option: $1" ;;
+    esac
+    shift
+  done
+  return 0
+}
+
+append_query() {
+  local path="$1" key="$2" value="$3"
+  [[ -n "$value" ]] || { printf '%s' "$path"; return; }
+  if [[ "$path" == *\?* ]]; then printf '%s&%s=%s' "$path" "$key" "$(urlencode "$value")"; else printf '%s?%s=%s' "$path" "$key" "$(urlencode "$value")"; fi
+}
+
+help_global() {
+  cat <<'EOF'
+
+Spün Media API CLI
+
+Usage:
+  spn <command> [flags]
+
+Command groups:
+  health       Check API health
+  search       Search movies, TV, anime, and suggestions
+  info         Retrieve title metadata
+  discover     Browse catalogue collections and rankings
+  anime        Anime catalogue and title-specific endpoints
+  stream       Retrieve playable streams
+  download     Retrieve downloads
+  subtitles    Retrieve subtitles
+  resolve      Resolve external identifiers
+  home         Read homepage snapshots and status
+  similar      Retrieve similar titles
+  franchise    List or retrieve franchises
+  proxy        Test stream and subtitle proxies
+  account      Customer account and key operations
+  admin        Administrative operations
+  internal     Direct Render/internal operations
+  config       Configure ~/.spn.env
+  endpoints    Display the complete endpoint registry
+  request      Call an endpoint directly
+
+Group help:
+  spn help --search
+  spn help --admin
+  spn help --stream
+
+Command help:
+  spn search --help
+  spn admin --help
+EOF
+}
+
+help_group() {
+  case "$1" in
+    --health)
+      cat <<'EOF'
+
+HEALTH COMMANDS
+
+spn health
+  Check the unauthenticated Worker health endpoint.
+
+spn endpoints
+  Display the local route registry and authentication classes.
+EOF
+      ;;
+    --search)
+      cat <<'EOF'
+
+SEARCH COMMANDS
+
+spn search
+  Prompt for a query and run general search.
+spn search --movie
+  Prompt for a query and search movies.
+spn search --tv
+  Prompt for a query and search TV.
+spn search --anime
+  Prompt for a query and search anime.
+spn search --suggestions
+  Prompt for a query and retrieve suggestions.
+spn search [above command] --params
+  Prompt for optional page and supported query parameters.
+EOF
+      ;;
+    --info)
+      cat <<'EOF'
+
+INFO COMMANDS
+
+spn info
+  Prompt for a Spün ID and retrieve metadata.
+spn info --cast
+  Prompt for a Spün ID and retrieve cast.
+spn info --episodes
+  Prompt for a Spün ID and retrieve episodes.
+spn info --related
+  Prompt for a Spün ID and retrieve related titles.
+spn info --episodes --params
+  Also prompt for optional season.
+EOF
+      ;;
+    --discover)
+      cat <<'EOF'
+
+DISCOVERY COMMANDS
+
+spn discover --trending
+spn discover --popular
+spn discover --new
+spn discover --genres
+spn discover --studios
+spn discover --studio
+spn discover --genre
+
+Use --movie, --tv, or --anime with genre filters. Add --params for optional page/type values.
+EOF
+      ;;
+    --anime)
+      cat <<'EOF'
+
+ANIME COMMANDS
+
+spn anime --seasons
+spn anime --season
+spn anime --schedule
+spn anime --rankings
+spn anime --airing
+spn anime --upcoming
+spn anime --format
+spn anime --demographic
+spn anime --source
+spn anime --genre
+spn anime --studios
+spn anime --studio
+spn anime --themes
+spn anime --fillers
+spn anime --franchise
+spn anime --characters
+spn anime --related
+
+Use --params for optional page, year, or other query parameters.
+EOF
+      ;;
+    --stream)
+      cat <<'EOF'
+
+STREAM COMMANDS
+
+spn stream
+  Prompt for type, ID, and type-specific values.
+spn stream --movie
+  Prompt for Spün ID.
+spn stream --tv
+  Prompt for Spün ID, season, and episode.
+spn stream --anime
+  Prompt for Spün ID and episode; season defaults to 1.
+spn stream --anime --season
+  Prompt for Spün ID, season, and episode.
+EOF
+      ;;
+    --download)
+      cat <<'EOF'
+
+DOWNLOAD COMMANDS
+
+spn download
+spn download --movie
+spn download --tv --all
+spn download --tv --episode
+spn download --anime --all
+spn download --anime --episode
+
+No episode selects the batch response. An episode selects the single-episode response.
+EOF
+      ;;
+    --subtitles)
+      cat <<'EOF'
+
+SUBTITLE COMMANDS
+
+spn subtitles
+spn subtitles --movie
+spn subtitles --tv
+spn subtitles --anime
+
+Movie prompts for ID. TV prompts for ID, season, and episode. Anime prompts for ID and episode.
+EOF
+      ;;
+    --resolve)
+      cat <<'EOF'
+
+RESOLVE COMMANDS
+
+spn resolve --list
+spn resolve
+spn resolve --tmdb
+spn resolve --imdb
+spn resolve --tvdb
+spn resolve --anilist
+spn resolve --mal
+spn resolve --kitsu
+spn resolve --moviebox
+EOF
+      ;;
+    --home)
+      cat <<'EOF'
+
+HOME COMMANDS
+
+spn home
+spn home --movie
+spn home --tv
+spn home --anime
+spn home --status
+EOF
+      ;;
+    --similar)
+      cat <<'EOF'
+
+SIMILAR COMMANDS
+
+spn similar
+spn similar --movie
+spn similar --tv
+spn similar --anime
+EOF
+      ;;
+    --franchise)
+      cat <<'EOF'
+
+FRANCHISE COMMANDS
+
+spn franchise
+spn franchise --get
+EOF
+      ;;
+    --proxy)
+      cat <<'EOF'
+
+PROXY COMMANDS
+
+spn proxy --stream
+spn proxy --subtitles
+
+Each command prompts for its opaque proxy token.
+EOF
+      ;;
+    --account)
+      cat <<'EOF'
+
+ACCOUNT COMMANDS
+
+spn account --me
+spn account keys
+spn account key --get
+spn account key --generate
+spn account key --revoke
+EOF
+      ;;
+    --admin)
+      cat <<'EOF'
+
+ADMIN COMMANDS
+
+spn admin
+spn admin home build
+spn admin home build --movie
+spn admin home build --tv
+spn admin home build --anime
+spn admin home build --wait
+spn admin home backfill
+spn admin home warm-cache
+spn admin cache clear
+spn admin franchise register
+spn admin diagnostics
+spn admin logs --list
+spn admin logs --read
+spn admin logs --upload
+spn admin logs --flush
+spn admin keys --list
+spn admin keys --get
+spn admin keys --generate
+spn admin keys --revoke
+spn admin accounts --create
+spn admin accounts --keys --list
+spn admin accounts --keys --generate
+
+Destructive operations ask for confirmation or accept --confirm.
+EOF
+      ;;
+    --internal)
+      cat <<'EOF'
+
+INTERNAL COMMANDS
+
+spn internal health
+spn internal stream
+spn internal download
+spn internal diagnostics
+spn internal logs --flush
+
+These commands use X-Internals-Key and the Render base URL.
+EOF
+      ;;
+    --config)
+      cat <<'EOF'
+
+CONFIG COMMANDS
+
+spn config
+  Open the numbered configuration menu.
+
+Configuration is stored in ~/.spn.env with mode 600.
+EOF
+      ;;
+    *) usage_error "Unknown help group: $1" ;;
+  esac
+}
+
+endpoint_registry() {
+  cat <<'EOF'
+SYSTEM
+GET  /v1/utility/health                      none
+GET  /v1/utility/resolve                    admin
+GET  /v1/utility/resolve/:namespace         admin
+GET  /v1/health                              none (alias)
+GET  /v1/resolve                             admin (alias)
+GET  /v1/resolve/:namespace                  admin (alias)
+GET  /v1/trending                            admin (alias)
+GET  /v1/popular                             admin (alias)
+GET  /v1/new                                 admin (alias)
+GET  /v1/genres                              admin (alias)
+GET  /v1/studios                             admin (alias)
+
+SEARCH
+GET  /v1/search                              admin
+GET  /v1/search/movie                        admin
+GET  /v1/search/tv                           admin
+GET  /v1/search/anime                        admin
+GET  /v1/search/suggestions                  admin
+
+INFO AND SIMILAR
+GET  /v1/info/:spunId                        admin
+GET  /v1/info/:spunId/episodes               admin
+GET  /v1/info/:spunId/cast                   admin
+GET  /v1/info/:spunId/related                admin
+GET  /v1/similar/movie/:spunId               admin
+GET  /v1/similar/tv/:spunId                  admin
+GET  /v1/similar/anime/:spunId               admin
+
+DISCOVERY
+GET  /v1/discover/trending                   admin
+GET  /v1/discover/popular                    admin
+GET  /v1/discover/new                        admin
+GET  /v1/discover/genres                     admin
+GET  /v1/discover/studios                    admin
+GET  /v1/discover/studio/:studioId           admin
+GET  /v1/discover/:type                      admin
+
+ANIME
+GET  /v1/anime/seasons                       admin
+GET  /v1/anime/seasons/:year/:season         admin
+GET  /v1/anime/schedule                      admin
+GET  /v1/anime/rankings/alltime              admin
+GET  /v1/anime/rankings/popular              admin
+GET  /v1/anime/rankings/season/:year/:season admin
+GET  /v1/anime/rankings/genre/:genre         admin
+GET  /v1/anime/airing                        admin
+GET  /v1/anime/upcoming                      admin
+GET  /v1/anime/format/:format                admin
+GET  /v1/anime/demographic/:demographic      admin
+GET  /v1/anime/source/:source                admin
+GET  /v1/anime/genre/:genre                  admin
+GET  /v1/anime/studios                       admin
+GET  /v1/anime/studio/:studioId              admin
+GET  /v1/anime/:spunId/themes                admin
+GET  /v1/anime/:spunId/fillers               admin
+GET  /v1/anime/:spunId/franchise             admin
+GET  /v1/anime/:spunId/characters            admin
+GET  /v1/anime/:spunId/related               admin
+
+MEDIA DELIVERY
+GET  /v1/stream/:type/:spunId               admin
+GET  /v1/stream/:type/:spunId/:episode       admin
+GET  /v1/stream/:type/:spunId/:season/:episode admin
+GET  /v1/download/:spunId                    admin
+GET  /v1/download/:type/:spunId             admin
+GET  /v1/download/:type/:spunId/:episode     admin
+GET  /v1/download/:type/:spunId/:season/:episode admin
+GET  /v1/subtitles/:spunId                   admin
+
+HOME AND FRANCHISE
+GET  /v1/home                               admin
+GET  /v1/home/movie                          admin
+GET  /v1/home/tv                             admin
+GET  /v1/home/anime                          admin
+GET  /v1/home/status                         admin
+GET  /v1/franchise                           admin
+GET  /v1/franchise/:reference                admin
+
+PROXY
+GET  /v1/proxy/stream                        admin
+GET  /v1/proxy/subtitles                     admin
+
+ADMINISTRATION
+GET  /v1/admin                               admin
+POST /v1/admin/home/build                    admin
+POST /v1/admin/home/backfill                 admin
+POST /v1/admin/home/warm-cache               admin
+POST /v1/admin/cache/clear                   admin
+POST /v1/admin/franchise/register            admin
+GET  /v1/admin/diagnostics/:provider/:type   admin
+GET  /v1/admin/logs                          admin
+GET  /v1/admin/logs/:service/:date           admin
+POST /v1/admin/logs/upload                   admin
+POST /v1/admin/logs/flush                    admin
+GET  /v1/admin/keys/list                     admin
+GET  /v1/admin/keys/:keyId                   admin
+POST /v1/admin/keys/:keyId/revoke            admin
+POST /v1/admin/accounts/create               admin
+GET  /v1/admin/accounts/:accountId/keys/list admin
+POST /v1/admin/accounts/:accountId/keys/gen  admin
+
+ACCOUNT AND INTERNAL
+GET  /v1/account/me                          session
+GET  /v1/account/keys/list                   session
+POST /v1/account/keys/gen                    session
+GET  /v1/account/keys/:id                    session
+POST /v1/account/keys/:id/revoke             session
+PUT  /v1/internal/accounts/:authSubject      internal
+
+RENDER PROVIDER SERVICE
+GET  /health                                internal
+GET  /stream                                internal
+GET  /download                              internal
+GET  /admin/diagnostics/:provider/:type     internal
+POST /admin/logs/flush                      internal
+EOF
+}
+
+run_search() {
+  local mode="" query path page
+  while (($#)); do
+    case "$1" in
+      --movie) mode=movie ;;
+      --tv) mode=tv ;;
+      --anime) mode=anime ;;
+      --suggestions) mode=suggestions ;;
+      --params) PARAMS=true ;;
+      --raw) RAW=true ;;
+      --help) help_group --search; return ;;
+      *) usage_error "Unknown search option: $1" ;;
+    esac
+    shift
+  done
+  query="$(prompt_required Query)"
+  case "$mode" in
+    movie|tv|anime) path="search/$mode" ;;
+    suggestions) path='search/suggestions' ;;
+    '') path='search' ;;
+    *) usage_error 'Invalid search mode.' ;;
+  esac
+  path="$(append_query "$path" q "$query")"
+  if [[ "$PARAMS" == true ]]; then
+    page="$(prompt_optional Page)"
+    path="$(append_query "$path" page "$page")"
+  fi
+  request GET "$path" admin
+}
+
+run_info() {
+  local mode="" id season path
+  while (($#)); do
+    case "$1" in
+      --cast) mode=cast ;;
+      --episodes) mode=episodes ;;
+      --related) mode=related ;;
+      --params) PARAMS=true ;;
+      --raw) RAW=true ;;
+      --help) help_group --info; return ;;
+      *) usage_error "Unknown info option: $1" ;;
+    esac
+    shift
+  done
+  id="$(prompt_required 'Spün ID')"
+  path="info/$(urlencode "$id")"
+  [[ -n "$mode" ]] && path="$path/$mode"
+  if [[ "$PARAMS" == true && "$mode" == episodes ]]; then
+    season="$(prompt_optional Season)"
+    path="$(append_query "$path" season "$season")"
+  fi
+  request GET "$path" admin
+}
+
+run_discover() {
+  local mode="" value type page genre="" path
+  while (($#)); do
+    case "$1" in
+      --trending|--popular|--new|--genres|--studios|--studio) mode="${1#--}" ;;
+      --genre) genre='prompt' ;;
+      --movie) type=movie ;;
+      --tv) type=tv ;;
+      --anime) type=anime ;;
+      --params) PARAMS=true ;;
+      --raw) RAW=true ;;
+      --help) help_group --discover; return ;;
+      *) usage_error "Unknown discover option: $1" ;;
+    esac
+    shift
+  done
+  [[ -n "$mode" ]] || mode=trending
+  if [[ "$mode" == studio ]]; then
+    value="$(prompt_required 'Studio ID')"
+    path="discover/studio/$(urlencode "$value")"
+  elif [[ "$mode" == genres || "$mode" == studios || "$mode" == trending || "$mode" == popular || "$mode" == new ]]; then
+    path="discover/$mode"
+  else
+    [[ -n "${type:-}" ]] || type="$(prompt_type)"
+    path="discover/$type"
+  fi
+  if [[ "$genre" == prompt ]]; then
+    [[ -n "${type:-}" ]] || type="$(prompt_type)"
+    value="$(prompt_required Genre)"
+    path="discover/$type"
+    path="$(append_query "$path" genre "$value")"
+  elif [[ "$PARAMS" == true ]]; then
+    page="$(prompt_optional Page)"
+    path="$(append_query "$path" page "$page")"
+  fi
+  if [[ "$PARAMS" == true && "$genre" == prompt ]]; then
+    page="$(prompt_optional Page)"
+    path="$(append_query "$path" page "$page")"
+  fi
+  if [[ -n "${type:-}" && "$mode" != studio && "$mode" != genres && "$mode" != studios && "$genre" != prompt ]]; then
+    path="$(append_query "$path" type "$type")"
+  fi
+  request GET "$path" admin
+}
+
+run_anime() {
+  local mode="" value page year season id path ranking
+  while (($#)); do
+    case "$1" in
+      --seasons|--season|--schedule|--rankings|--airing|--upcoming|--format|--demographic|--source|--genre|--studios|--studio|--themes|--fillers|--franchise|--characters|--related) mode="${1#--}" ;;
+      --params) PARAMS=true ;;
+      --raw) RAW=true ;;
+      --help) help_group --anime; return ;;
+      *) usage_error "Unknown anime option: $1" ;;
+    esac
+    shift
+  done
+  [[ -n "$mode" ]] || { mode=seasons; printf 'Action not specified; using seasons.\n' >&2; }
+  case "$mode" in
+    seasons|schedule|airing|upcoming|studios) path="anime/$mode" ;;
+    season) year="$(prompt_number Year)"; season="$(prompt_required Season)"; path="anime/seasons/$(urlencode "$year")/$(urlencode "$season")" ;;
+    rankings)
+      ranking="$(prompt_required 'Ranking [alltime/popular/season/genre]')"
+      case "$ranking" in
+        alltime|popular) path="anime/rankings/$ranking" ;;
+        season) year="$(prompt_number Year)"; season="$(prompt_required Season)"; path="anime/rankings/season/$(urlencode "$year")/$(urlencode "$season")" ;;
+        genre) value="$(prompt_required Genre)"; path="anime/rankings/genre/$(urlencode "$value")" ;;
+        *) usage_error 'Ranking must be alltime, popular, season, or genre.' ;;
+      esac
+      ;;
+    format|demographic|source|genre) value="$(prompt_required "${mode^}")"; path="anime/$mode/$(urlencode "$value")" ;;
+    studio) value="$(prompt_required 'Studio ID')"; path="anime/studio/$(urlencode "$value")" ;;
+    themes|fillers|franchise|characters|related) id="$(prompt_required 'Spün ID')"; path="anime/$(urlencode "$id")/$mode" ;;
+    *) usage_error 'Unknown anime action.' ;;
+  esac
+  if [[ "$PARAMS" == true ]]; then
+    page="$(prompt_optional Page)"
+    path="$(append_query "$path" page "$page")"
+  fi
+  request GET "$path" admin
+}
+
+run_stream() {
+  local type="" id season episode path
+  while (($#)); do
+    case "$1" in
+      --movie) type=movie ;;
+      --tv) type=tv ;;
+      --anime) type=anime ;;
+      --season) season='prompt' ;;
+      --params) PARAMS=true ;;
+      --raw) RAW=true ;;
+      --help) help_group --stream; return ;;
+      *) usage_error "Unknown stream option: $1" ;;
+    esac
+    shift
+  done
+  [[ -n "$type" ]] || type="$(prompt_type)"
+  id="$(prompt_required 'Spün ID')"
+  case "$type" in
+    movie) path="stream/movie/$(urlencode "$id")" ;;
+    tv) season="$(prompt_number Season)"; episode="$(prompt_number Episode)"; path="stream/tv/$(urlencode "$id")/$season/$episode" ;;
+    anime)
+      if [[ "${season:-}" == prompt ]]; then season="$(prompt_number Season)"; else season=1; fi
+      episode="$(prompt_number Episode)"
+      path="stream/anime/$(urlencode "$id")/$season/$episode"
+      ;;
+  esac
+  request GET "$path" admin
+}
+
+run_download() {
+  local type="" id season episode path all=false
+  while (($#)); do
+    case "$1" in
+      --movie) type=movie ;;
+      --tv) type=tv ;;
+      --anime) type=anime ;;
+      --all) all=true ;;
+      --episode) episode='prompt' ;;
+      --params) PARAMS=true ;;
+      --raw) RAW=true ;;
+      --help) help_group --download; return ;;
+      *) usage_error "Unknown download option: $1" ;;
+    esac
+    shift
+  done
+  [[ -n "$type" ]] || type="$(prompt_type)"
+  id="$(prompt_required 'Spün ID')"
+  if [[ "$type" == movie ]]; then
+    path="download/movie/$(urlencode "$id")"
+  elif [[ "$all" == true ]]; then
+    path="download/$type/$(urlencode "$id")"
+  else
+    if [[ "${episode:-}" == prompt ]]; then
+      season="$(prompt_number Season)"
+      episode="$(prompt_number Episode)"
+      path="download/$type/$(urlencode "$id")/$season/$episode"
+    else
+      season="$(prompt_optional Season)"
+      if [[ -n "$season" ]]; then
+        episode="$(prompt_number Episode)"
+        path="download/$type/$(urlencode "$id")/$season/$episode"
+      else
+        path="download/$type/$(urlencode "$id")"
+      fi
+    fi
+  fi
+  request GET "$path" admin
+}
+
+run_subtitles() {
+  local type="" id season episode language path
+  while (($#)); do
+    case "$1" in
+      --movie) type=movie ;;
+      --tv) type=tv ;;
+      --anime) type=anime ;;
+      --params) PARAMS=true ;;
+      --raw) RAW=true ;;
+      --help) help_group --subtitles; return ;;
+      *) usage_error "Unknown subtitles option: $1" ;;
+    esac
+    shift
+  done
+  [[ -n "$type" ]] || type="$(prompt_type)"
+  id="$(prompt_required 'Spün ID')"
+  path="subtitles/$(urlencode "$id")"
+  if [[ "$type" == tv || "$type" == anime ]]; then
+    season="$(prompt_optional Season)"
+    episode="$(prompt_optional Episode)"
+    path="$(append_query "$path" season "$season")"
+    path="$(append_query "$path" episode "$episode")"
+  fi
+  if [[ "$PARAMS" == true ]]; then
+    language="$(prompt_optional Language)"
+    path="$(append_query "$path" lang "$language")"
+  fi
+  request GET "$path" admin
+}
+
+run_resolve() {
+  local namespace="" id type path
+  while (($#)); do
+    case "$1" in
+      --list) require_base_config; request GET resolve admin; return ;;
+      --tmdb|--imdb|--tvdb|--anilist|--mal|--kitsu|--moviebox) namespace="${1#--}" ;;
+      --params) PARAMS=true ;;
+      --raw) RAW=true ;;
+      --help) help_group --resolve; return ;;
+      *) usage_error "Unknown resolve option: $1" ;;
+    esac
+    shift
+  done
+  [[ -n "$namespace" ]] || namespace="$(prompt_required Namespace)"
+  id="$(prompt_required Identifier)"
+  path="resolve/$(urlencode "$namespace")?id=$(urlencode "$id")"
+  if [[ "$PARAMS" == true ]]; then
+    type="$(prompt_optional Type)"
+    path="$(append_query "$path" type "$type")"
+  fi
+  request GET "$path" admin
+}
+
+run_home() {
+  local type="all" path
+  while (($#)); do
+    case "$1" in
+      --movie) type=movie ;;
+      --tv) type=tv ;;
+      --anime) type=anime ;;
+      --status) path='home/status' ;;
+      --raw) RAW=true ;;
+      --help) help_group --home; return ;;
+      --*) usage_error "Unknown home option: $1" ;;
+    esac
+    shift
+  done
+  if [[ -z "${path:-}" ]]; then
+    [[ "$type" == all ]] && path='home' || path="home/$type"
+  fi
+  request GET "$path" admin
+}
+
+run_similar() {
+  local type="" id path
+  while (($#)); do
+    case "$1" in
+      --movie) type=movie ;;
+      --tv) type=tv ;;
+      --anime) type=anime ;;
+      --raw) RAW=true ;;
+      --help) help_group --similar; return ;;
+      *) usage_error "Unknown similar option: $1" ;;
+    esac
+    shift
+  done
+  [[ -n "$type" ]] || type="$(prompt_type)"
+  id="$(prompt_required 'Spün ID')"
+  path="similar/$type/$(urlencode "$id")"
+  request GET "$path" admin
+}
+
+run_franchise() {
+  local action="" reference path
+  while (($#)); do
+    case "$1" in
+      --get|--id) action=get ;;
+      --raw) RAW=true ;;
+      --help) help_group --franchise; return ;;
+      *) usage_error "Unknown franchise option: $1" ;;
+    esac
+    shift
+  done
+  if [[ "$action" == get ]]; then reference="$(prompt_required 'Franchise reference')"; path="franchise/$(urlencode "$reference")"; else path=franchise; fi
+  request GET "$path" admin
+}
+
+run_proxy() {
+  local mode="" token path
+  while (($#)); do
+    case "$1" in
+      --stream) mode=stream ;;
+      --subtitles) mode=subtitles ;;
+      --raw) RAW=true ;;
+      --help) help_group --proxy; return ;;
+      *) usage_error "Unknown proxy option: $1" ;;
+    esac
+    shift
+  done
+  [[ -n "$mode" ]] || { mode="$(prompt_required 'Proxy type [stream/subtitles]')"; }
+  [[ "$mode" == stream || "$mode" == subtitles ]] || usage_error 'Proxy type must be stream or subtitles.'
+  token="$(prompt_secret_required 'Proxy token')"
+  path="proxy/$mode?t=$(urlencode "$token")"
+  request GET "$path" admin
+}
+
+body_account_create() {
+  local auth_subject email name status
+  auth_subject="$(prompt_required 'Auth subject')"
+  read -r -p 'Email [optional]: ' email
+  read -r -p 'Name [optional]: ' name
+  read -r -p 'Status [active]: ' status
+  status="${status:-active}"
+  jq -nc --arg auth_subject "$auth_subject" --arg email "$email" --arg name "$name" --arg status "$status" '{auth_subject:$auth_subject,email:($email|if length==0 then null else . end),name:($name|if length==0 then null else . end),status:$status}'
+}
+
+body_key_generate() {
+  local label expires
+  label="$(prompt_required Label)"
+  read -r -p 'Expires at [optional; blank means never/policy default]: ' expires
+  jq -nc --arg label "$label" --arg expires "$expires" '{label:$label,expires_at:($expires|if length==0 then null else . end)}'
+}
+
+run_account() {
+  local mode="" id reason body path status page limit
+  while (($#)); do
+    case "$1" in
+      --me) mode=me ;;
+      keys) mode=keys ;;
+      key) mode=key ;;
+      --params) PARAMS=true ;;
+      --raw) RAW=true ;;
+      --help) help_group --account; return ;;
+      *) usage_error "Unknown account option: $1" ;;
+    esac
+    shift
+  done
+  require_base_config
+  case "$mode" in
+    me|'') request GET account/me admin ;;
+    keys) path='account/keys/list'; if [[ "$PARAMS" == true ]]; then status="$(prompt_optional Status)"; page="$(prompt_optional Page)"; limit="$(prompt_optional Limit)"; path="$(append_query "$path" status "$status")"; path="$(append_query "$path" page "$page")"; path="$(append_query "$path" limit "$limit")"; fi; request GET "$path" admin ;;
+    key)
+      read -r -p 'Action [get/generate/revoke]: ' mode
+      case "$mode" in
+        get) id="$(prompt_required 'Key ID')"; request GET "account/keys/$(urlencode "$id")" admin ;;
+        generate) body="$(body_key_generate)"; request POST account/keys/gen admin "$body" ;;
+        revoke) id="$(prompt_required 'Key ID')"; reason="$(prompt_required Reason)"; body="$(jq -nc --arg reason "$reason" '{reason:$reason}')"; confirm_action 'Revoke this API key?'; request POST "account/keys/$(urlencode "$id")/revoke" admin "$body" ;;
+        *) usage_error 'Action must be get, generate, or revoke.' ;;
+      esac
+      ;;
+  esac
+}
+
+run_admin() {
+  local mode="" submode="" type="all" id account_id key_id label expires reason service date title provider path body page limit from to namespace
+  while (($#)); do
+    case "$1" in
+      home|cache|franchise|diagnostics|logs|keys|accounts) mode="$1" ;;
+      build|backfill|warm-cache|clear|register|list|read|upload|flush|get|generate|revoke|create|--list|--read|--upload|--flush|--generate|--revoke|--create|--keys) submode="${1#--}" ;;
+      --movie) type=movie ;;
+      --tv) type=tv ;;
+      --anime) type=anime ;;
+      --all) type=all ;;
+      --wait) submode=wait ;;
+      --params) PARAMS=true ;;
+      --confirm) CONFIRM=true ;;
+      --raw) RAW=true ;;
+      --help) help_group --admin; return ;;
+      *) usage_error "Unknown admin option: $1" ;;
+    esac
+    shift
+  done
+  require_base_config
+  case "$mode" in
+    '') request GET admin admin ;;
+    home)
+      case "$submode" in
+        build|wait|'') path="admin/home/build?type=$type"; [[ "$submode" == wait ]] && path="$(append_query "$path" wait true)"; confirm_action 'Build homepage?'; request POST "$path" admin ;;
+        backfill) path=admin/home/backfill; if [[ "$PARAMS" == true ]]; then limit="$(prompt_optional Limit)"; path="$(append_query "$path" limit "$limit")"; fi; confirm_action 'Run metadata backfill?'; request POST "$path" admin ;;
+        warm-cache) confirm_action 'Warm homepage cache?'; request POST "admin/home/warm-cache?type=$type" admin ;;
+        *) usage_error 'Unknown admin home action.' ;;
+      esac
+      ;;
+    cache) [[ "$submode" == clear || -z "$submode" ]] || usage_error 'Unknown cache action.'; confirm_action 'Clear API cache?'; request POST admin/cache/clear admin ;;
+    franchise) [[ "$submode" == register ]] || usage_error 'Use --register/register for administrative franchise registration.'; read -r -p 'Franchise reference [optional]: ' id; path=admin/franchise/register; [[ -n "$id" ]] && path="$(append_query "$path" id "$id")"; confirm_action 'Register franchise?'; request POST "$path" admin ;;
+    diagnostics) provider="$(prompt_required Provider)"; type="$(prompt_type)"; title="$(prompt_required Title)"; path="admin/diagnostics/$(urlencode "$provider")/$type?title=$(urlencode "$title")"; request GET "$path" admin ;;
+    logs)
+      case "$submode" in
+        list|'') path=admin/logs; if [[ "$PARAMS" == true ]]; then service="$(prompt_optional Service)"; from="$(prompt_optional From)"; to="$(prompt_optional To)"; page="$(prompt_optional Page)"; limit="$(prompt_optional Limit)"; path="$(append_query "$path" service "$service")"; path="$(append_query "$path" from "$from")"; path="$(append_query "$path" to "$to")"; path="$(append_query "$path" page "$page")"; path="$(append_query "$path" limit "$limit")"; fi; request GET "$path" admin ;;
+        read) service="$(prompt_required Service)"; date="$(prompt_date)"; path="admin/logs/$service/$date"; if [[ "$PARAMS" == true ]]; then path="$(append_query "$path" level "$(prompt_optional Level)")"; path="$(append_query "$path" namespace "$(prompt_optional Namespace)")"; fi; request GET "$path" admin ;;
+        upload) service="$(prompt_required Service)"; date="$(prompt_date)"; local file; file="$(prompt_required 'Log file path')"; [[ -f "$file" ]] || runtime_error 'Log file does not exist.'; body="$(jq -nc --arg service "$service" --arg date "$date" --rawfile content "$file" '{service:$service,date:$date,content:$content}')"; confirm_action 'Upload log archive?'; request POST admin/logs/upload admin "$body" ;;
+        flush) service="$(prompt_required Service)"; confirm_action 'Flush service log?'; request POST "admin/logs/flush?service=$(urlencode "$service")" admin ;;
+        *) usage_error 'Log action must be list, read, upload, or flush.' ;;
+      esac
+      ;;
+    keys)
+      case "$submode" in
+        list|'') path=admin/keys/list; if [[ "$PARAMS" == true ]]; then path="$(append_query "$path" status "$(prompt_optional Status)")"; path="$(append_query "$path" account_id "$(prompt_optional Account-ID)")"; path="$(append_query "$path" page "$(prompt_optional Page)")"; path="$(append_query "$path" limit "$(prompt_optional Limit)")"; fi; request GET "$path" admin ;;
+        get) key_id="$(prompt_required 'Key ID')"; request GET "admin/keys/$(urlencode "$key_id")" admin ;;
+        generate) account_id="$(prompt_required 'Account ID')"; body="$(body_key_generate)"; request POST "admin/accounts/$(urlencode "$account_id")/keys/gen" admin "$body" ;;
+        revoke) key_id="$(prompt_required 'Key ID')"; reason="$(prompt_required Reason)"; body="$(jq -nc --arg reason "$reason" '{reason:$reason}')"; confirm_action 'Revoke this API key?'; request POST "admin/keys/$(urlencode "$key_id")/revoke" admin "$body" ;;
+        *) usage_error 'Key action must be list, get, generate, or revoke.' ;;
+      esac
+      ;;
+    accounts)
+      if [[ "$submode" == create ]]; then body="$(body_account_create)"; request POST admin/accounts/create admin "$body";
+      elif [[ "$submode" == keys || "$submode" == list || "$submode" == generate ]]; then
+        account_id="$(prompt_required 'Account ID')"
+        if [[ "$submode" == keys ]]; then read -r -p 'Key action [list/generate]: ' submode; fi
+        case "$submode" in
+          list) path="admin/accounts/$(urlencode "$account_id")/keys/list"; if [[ "$PARAMS" == true ]]; then page="$(prompt_optional Page)"; limit="$(prompt_optional Limit)"; path="$(append_query "$path" page "$page")"; path="$(append_query "$path" limit "$limit")"; fi; request GET "$path" admin ;;
+          generate) body="$(body_key_generate)"; request POST "admin/accounts/$(urlencode "$account_id")/keys/gen" admin "$body" ;;
+          *) usage_error 'Key action must be list or generate.' ;;
+        esac
+      else usage_error 'Use --create or --keys.'; fi
+      ;;
+    *) usage_error 'Unknown admin command group.' ;;
+  esac
+}
+
+run_internal() {
+  local mode="" type title spun_id tmdb_id anilist_id mal_id moviebox_id year season episode provider service path query
+  while (($#)); do
+    case "$1" in
+      health|stream|download|diagnostics|logs) mode="$1" ;;
+      --flush) mode=logs ;;
+      --movie) type=movie ;;
+      --tv) type=tv ;;
+      --anime) type=anime ;;
+      --raw) RAW=true ;;
+      --help) help_group --internal; return ;;
+      *) usage_error "Unknown internal option: $1" ;;
+    esac
+    shift
+  done
+  require_internal_config
+  case "$mode" in
+    health|'') request GET health internal ;;
+    stream|download)
+      [[ -n "${type:-}" ]] || type="$(prompt_type)"
+      spun_id="$(prompt_required 'Spün ID')"
+      title="$(prompt_required Title)"
+      if [[ "$type" == anime ]]; then
+        anilist_id="$(prompt_number 'AniList ID')"
+      else
+        tmdb_id="$(prompt_optional 'TMDB ID')"
+        moviebox_id="$(prompt_optional 'MovieBox ID')"
+        if [[ -z "$tmdb_id" && -z "$moviebox_id" ]]; then
+          printf 'Error: TMDB ID or MovieBox ID is required.\n' >&2
+          tmdb_id="$(prompt_number 'TMDB ID')"
+        fi
+        [[ "$type" == tv ]] && { season="$(prompt_number Season)"; episode="$(prompt_number Episode)"; }
+      fi
+      path="$mode?type=$type"
+      path="$(append_query "$path" spun_id "$spun_id")"
+      path="$(append_query "$path" title "$title")"
+      path="$(append_query "$path" tmdb_id "$tmdb_id")"
+      path="$(append_query "$path" anilist_id "$anilist_id")"
+      path="$(append_query "$path" moviebox_id "$moviebox_id")"
+      path="$(append_query "$path" season "${season:-}")"
+      path="$(append_query "$path" episode "${episode:-}")"
+      request GET "$path" internal
+      ;;
+    diagnostics) provider="$(prompt_required Provider)"; type="$(prompt_type)"; title="$(prompt_required Title)"; path="admin/diagnostics/$(urlencode "$provider")/$type?title=$(urlencode "$title")"; request GET "$path" internal ;;
+    logs) service="$(prompt_required Service)"; confirm_action 'Flush service log?'; request POST "admin/logs/flush?service=$(urlencode "$service")" internal ;;
+    *) usage_error 'Unknown internal command.' ;;
+  esac
+}
+
+run_generic_request() {
+  local method path auth=admin body="" query key value
+  method="${1:-}"
+  path="${2:-}"
+  [[ -n "$method" && -n "$path" ]] || usage_error 'Usage: spn request GET|POST|PUT|PATCH|DELETE /path'
+  shift 2 || true
+  while (($#)); do
+    case "$1" in
+      --auth) shift; auth="${1:-}" ;;
+      --params) PARAMS=true ;;
+      --body) shift; body="${1:-}" ;;
+      --body-file) shift; body="$(cat "${1:-}")" ;;
+      --confirm) CONFIRM=true ;;
+      --raw) RAW=true ;;
+      --param) shift; key="${1%%=*}"; value="${1#*=}"; path="$(append_query "$path" "$key" "$value")" ;;
+      --header) shift ;; # deliberately ignored; the simple client owns auth headers
+      *) usage_error "Unknown request option: $1" ;;
+    esac
+    shift
+  done
+  case "$auth" in admin) require_base_config ;; internal) require_internal_config ;; none) [[ -n "$SPN_API_BASE_URL" ]] || runtime_error 'Worker API URL is not configured.' ;;     *) usage_error 'Auth must be admin, internal, or none.' ;; esac
+  if [[ "$method" != GET && "$method" != HEAD && "$method" != OPTIONS ]]; then confirm_action 'Send request?' ; fi
+  request "$method" "$path" "$auth" "$body"
+}
+
+main() {
+  local command="${1:-help}"
+  shift || true
+
+  case "$command" in
+    help|-h|--help)
+      if (($#)); then help_group "$1"; else help_global; fi
+      return 0
+      ;;
+    config) config_menu; return 0 ;;
+  esac
+
+  require_dependency curl
+  require_dependency jq
+  load_config
+  PARAMS=false
+  CONFIRM=false
+  RAW=false
+
+  case "$command" in
+    health) require_worker_url; request GET health none ;;
+    endpoints) require_base_config; endpoint_registry ;;
+    search) require_base_config; run_search "$@" ;;
+    info) require_base_config; run_info "$@" ;;
+    discover) require_base_config; run_discover "$@" ;;
+    anime) require_base_config; run_anime "$@" ;;
+    stream) require_base_config; run_stream "$@" ;;
+    download) require_base_config; run_download "$@" ;;
+    subtitles) require_base_config; run_subtitles "$@" ;;
+    resolve) require_base_config; run_resolve "$@" ;;
+    home) require_base_config; run_home "$@" ;;
+    similar) require_base_config; run_similar "$@" ;;
+    franchise) require_base_config; run_franchise "$@" ;;
+    proxy) require_base_config; run_proxy "$@" ;;
+    account) run_account "$@" ;;
+    admin) run_admin "$@" ;;
+    internal) run_internal "$@" ;;
+    request) run_generic_request "$@" ;;
+    *) printf 'Error: Unknown command: %s\n' "$command" >&2; help_global; exit 2 ;;
+  esac
+}
+
+main "$@"
