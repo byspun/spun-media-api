@@ -75,6 +75,7 @@ account.post('/keys/gen', async (c) => {
   const bodyValue = await jsonBody(c);
   if (bodyValue instanceof Response) return bodyValue;
   if (typeof bodyValue.label !== 'string' || !bodyValue.label.trim() || bodyValue.label.trim().length > 100) return errorResponse('INVALID_KEY_LABEL', 'A valid key label is required.', 400);
+  if (bodyValue.expires_at !== undefined && bodyValue.expires_at !== null && typeof bodyValue.expires_at !== 'string') return errorResponse('INVALID_KEY_EXPIRY', 'Invalid key expiry.', 400);
   const expiryValue = typeof bodyValue.expires_at === 'string' ? parseExpiry(bodyValue.expires_at) : null;
   if (expiryValue instanceof Response) return expiryValue;
   const sql = getDb(c.env);

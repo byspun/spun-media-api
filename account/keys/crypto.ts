@@ -10,11 +10,19 @@ function cryptoApi(): Crypto {
 }
 
 export function generateApiKey(): string {
+  const crypto = cryptoApi();
+  const suffix: string[] = [];
+  const limit = 256 - (256 % KEY_ALPHABET.length);
   const random = new Uint8Array(32);
-  cryptoApi().getRandomValues(random);
-  let suffix = '';
-  for (const byte of random) suffix += KEY_ALPHABET[byte % KEY_ALPHABET.length];
-  return `spn_${suffix}`;
+  while (suffix.length < 32) {
+    crypto.getRandomValues(random);
+    for (const byte of random) {
+      if (byte >= limit) continue;
+      suffix.push(KEY_ALPHABET[byte % KEY_ALPHABET.length]);
+      if (suffix.length === 32) break;
+    }
+  }
+  return `spn_${suffix.join('')}`;
 }
 
 export function keyPrefix(key: string): string {
