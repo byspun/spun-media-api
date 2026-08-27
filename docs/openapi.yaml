@@ -1,0 +1,2567 @@
+openapi: 3.1.0
+info:
+  title: Spün Media API
+  version: 1.0.0
+  description: |
+    Spün Media API is a universal media provider for movie, television, and anime
+    applications. It unifies metadata, discovery, content mapping, streaming,
+    downloads, subtitles, proxy delivery, administration, and provider orchestration
+    behind one consistent API.
+
+    The public Worker base path is /v1. The hosted Spün instance is provided as a
+    reference; source-code users should deploy their own Worker, providers service,
+    database, cache, credentials, and supporting MovieBox service.
+  contact:
+    url: https://byspun.xyz
+  license:
+    name: See repository licence terms
+    url: https://github.com/heisdanny64/spun-media-api
+servers:
+  - url: https://media.byspun.xyz/v1
+    description: Hosted Spün Media API v1
+  - url: https://{workerHost}/v1
+    description: Self-hosted metadata Worker
+    variables:
+      workerHost:
+        default: api.example.com
+        description: Hostname of the self-hosted metadata Worker
+
+tags:
+  - name: Health
+  - name: Search
+  - name: Metadata
+  - name: Discovery
+  - name: Anime
+  - name: Similar
+  - name: Streaming
+  - name: Downloads
+  - name: Subtitles
+  - name: Resolver
+  - name: Home
+  - name: Franchises
+  - name: Proxy
+  - name: Administration
+  - name: Account
+  - name: Internal
+  - name: Providers
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Check API and dependency health
+      operationId: getHealthAlias
+      description: Redirects with HTTP 307 to /utility/health.
+      security: []
+      responses:
+        '200':
+          $ref: '#/components/responses/HealthResponse'
+        '307':
+          description: Redirect to the canonical health route.
+          headers:
+            Location:
+              schema:
+                type: string
+
+  /utility/health:
+    get:
+      tags: [Health]
+      summary: Check API and dependency health
+      operationId: getUtilityHealth
+      security: []
+      responses:
+        '200':
+          $ref: '#/components/responses/HealthResponse'
+        '503':
+          $ref: '#/components/responses/ServiceOffline'
+
+  /resolve:
+    get:
+      tags: [Resolver]
+      summary: List supported resolver namespaces
+      operationId: listResolverNamespacesAlias
+      description: Redirects with HTTP 307 to /utility/resolve.
+      security:
+        - UserKey: []
+        - AdminKey: []
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '307':
+          description: Redirect to the canonical resolver namespace route.
+          headers:
+            Location:
+              schema:
+                type: string
+
+  /utility/resolve:
+    get:
+      tags: [Resolver]
+      summary: List supported resolver namespaces
+      operationId: listResolverNamespaces
+      security:
+        - UserKey: []
+        - AdminKey: []
+      responses:
+        '200':
+          description: Supported resolver namespaces.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [supported]
+                properties:
+                  supported:
+                    type: array
+                    items:
+                      type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /resolve/{namespace}:
+    get:
+      tags: [Resolver]
+      summary: Resolve an external identifier
+      operationId: resolveAlias
+      description: Redirects with HTTP 307 to /utility/resolve/{namespace}.
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/Namespace'
+        - $ref: '#/components/parameters/ExternalId'
+        - $ref: '#/components/parameters/ContentTypeOptional'
+      responses:
+        '200':
+          $ref: '#/components/responses/ContentItemResponse'
+        '307':
+          description: Redirect to the canonical resolver route.
+          headers:
+            Location:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/ResolveNotFound'
+
+  /utility/resolve/{namespace}:
+    get:
+      tags: [Resolver]
+      summary: Resolve an external identifier
+      operationId: resolveIdentifier
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/Namespace'
+        - $ref: '#/components/parameters/ExternalId'
+        - $ref: '#/components/parameters/ContentTypeOptional'
+      responses:
+        '200':
+          $ref: '#/components/responses/ContentItemResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/ResolveNotFound'
+        '409':
+          $ref: '#/components/responses/ResolveConflict'
+        '502':
+          $ref: '#/components/responses/UpstreamError'
+        '504':
+          $ref: '#/components/responses/GatewayTimeout'
+
+  /search:
+    get:
+      tags: [Search]
+      summary: Search the unified catalogue
+      operationId: searchAll
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/SearchQuery'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/SearchType'
+      responses:
+        '200':
+          $ref: '#/components/responses/SearchResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /search/suggestions:
+    get:
+      tags: [Search]
+      summary: Get search suggestions
+      operationId: searchSuggestions
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/SearchQuery'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /search/movie:
+    get:
+      tags: [Search]
+      summary: Search movies
+      operationId: searchMovies
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/SearchQuery'
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          $ref: '#/components/responses/SearchResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /search/tv:
+    get:
+      tags: [Search]
+      summary: Search TV titles
+      operationId: searchTv
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/SearchQuery'
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          $ref: '#/components/responses/SearchResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /search/anime:
+    get:
+      tags: [Search]
+      summary: Search anime
+      operationId: searchAnime
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/SearchQuery'
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          $ref: '#/components/responses/SearchResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /info/{spunId}:
+    get:
+      tags: [Metadata]
+      summary: Get title metadata
+      operationId: getInfo
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/SpunId'
+      responses:
+        '200':
+          $ref: '#/components/responses/ContentItemResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/InvalidId'
+
+  /info/{spunId}/episodes:
+    get:
+      tags: [Metadata]
+      summary: Get season and episode metadata
+      operationId: getEpisodes
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/SpunId'
+        - $ref: '#/components/parameters/SeasonOptional'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/InvalidId'
+
+  /info/{spunId}/cast:
+    get:
+      tags: [Metadata]
+      summary: Get title cast
+      operationId: getCast
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/SpunId'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '404':
+          $ref: '#/components/responses/InvalidId'
+
+  /info/{spunId}/related:
+    get:
+      tags: [Metadata]
+      summary: Get related titles
+      operationId: getRelated
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/SpunId'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '404':
+          $ref: '#/components/responses/InvalidId'
+
+  /discover/trending:
+    get:
+      tags: [Discovery]
+      summary: Get trending titles
+      operationId: discoverTrending
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/DiscoveryType'
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          $ref: '#/components/responses/DiscoverResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /discover/popular:
+    get:
+      tags: [Discovery]
+      summary: Get popular titles
+      operationId: discoverPopular
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/DiscoveryType'
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          $ref: '#/components/responses/DiscoverResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /discover/new:
+    get:
+      tags: [Discovery]
+      summary: Get new titles
+      operationId: discoverNew
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/DiscoveryType'
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          $ref: '#/components/responses/DiscoverResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /discover/genres:
+    get:
+      tags: [Discovery]
+      summary: List discovery genres
+      operationId: discoverGenres
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/GenreTypeOptional'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /discover/studios:
+    get:
+      tags: [Discovery]
+      summary: List discovery studios
+      operationId: discoverStudios
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/CategoryOptional'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+
+  /discover/studio/{studioId}:
+    get:
+      tags: [Discovery]
+      summary: Browse titles from a studio
+      operationId: discoverStudio
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/StudioId'
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          $ref: '#/components/responses/DiscoverResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/InvalidStudio'
+
+  /discover/{type}:
+    get:
+      tags: [Discovery]
+      summary: Browse titles by content type
+      operationId: discoverByType
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/ContentType'
+        - $ref: '#/components/parameters/GenreFilter'
+        - $ref: '#/components/parameters/StudioFilter'
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          $ref: '#/components/responses/DiscoverResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /anime/seasons:
+    get:
+      tags: [Anime]
+      summary: List anime seasons
+      operationId: listAnimeSeasons
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /anime/seasons/{year}/{season}:
+    get:
+      tags: [Anime]
+      summary: List anime for a season
+      operationId: listAnimeSeason
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/Year'
+        - $ref: '#/components/parameters/AnimeSeason'
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          $ref: '#/components/responses/DiscoverResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /anime/schedule:
+    get:
+      tags: [Anime]
+      summary: Get anime schedule
+      operationId: getAnimeSchedule
+      security:
+        - UserKey: []
+        - AdminKey: []
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+
+  /anime/rankings/alltime:
+    get:
+      tags: [Anime]
+      summary: Get all-time anime rankings
+      operationId: getAnimeAllTimeRankings
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          $ref: '#/components/responses/DiscoverResponse'
+
+  /anime/rankings/popular:
+    get:
+      tags: [Anime]
+      summary: Get popular anime rankings
+      operationId: getAnimePopularRankings
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          $ref: '#/components/responses/DiscoverResponse'
+
+  /anime/rankings/season/{year}/{season}:
+    get:
+      tags: [Anime]
+      summary: Get seasonal anime rankings
+      operationId: getAnimeSeasonRankings
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/Year'
+        - $ref: '#/components/parameters/AnimeSeason'
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          $ref: '#/components/responses/DiscoverResponse'
+
+  /anime/rankings/genre/{genre}:
+    get:
+      tags: [Anime]
+      summary: Get anime rankings by genre
+      operationId: getAnimeGenreRankings
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/AnimeGenre'
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          $ref: '#/components/responses/DiscoverResponse'
+
+  /anime/airing:
+    get:
+      tags: [Anime]
+      summary: List airing anime
+      operationId: listAiringAnime
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          $ref: '#/components/responses/DiscoverResponse'
+
+  /anime/upcoming:
+    get:
+      tags: [Anime]
+      summary: List upcoming anime
+      operationId: listUpcomingAnime
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          $ref: '#/components/responses/DiscoverResponse'
+
+  /anime/format/{format}:
+    get:
+      tags: [Anime]
+      summary: Browse anime by format
+      operationId: listAnimeByFormat
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/AnimeFormat'
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          $ref: '#/components/responses/DiscoverResponse'
+
+  /anime/demographic/{demographic}:
+    get:
+      tags: [Anime]
+      summary: Browse anime by demographic
+      operationId: listAnimeByDemographic
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/AnimeDemographic'
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          $ref: '#/components/responses/DiscoverResponse'
+
+  /anime/source/{source}:
+    get:
+      tags: [Anime]
+      summary: Browse anime by source
+      operationId: listAnimeBySource
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/AnimeSource'
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          $ref: '#/components/responses/DiscoverResponse'
+
+  /anime/genre/{genre}:
+    get:
+      tags: [Anime]
+      summary: Browse anime by genre
+      operationId: listAnimeByGenre
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/AnimeGenre'
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          $ref: '#/components/responses/DiscoverResponse'
+
+  /anime/studios:
+    get:
+      tags: [Anime]
+      summary: List anime studios
+      operationId: listAnimeStudios
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/SearchFilterOptional'
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+
+  /anime/studio/{studioId}:
+    get:
+      tags: [Anime]
+      summary: Browse anime from a studio
+      operationId: listAnimeByStudio
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/AnimeStudioId'
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          $ref: '#/components/responses/DiscoverResponse'
+
+  /anime/{spunId}/themes:
+    get:
+      tags: [Anime]
+      summary: Get anime themes
+      operationId: getAnimeThemes
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/SpunId'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '404':
+          $ref: '#/components/responses/InvalidId'
+
+  /anime/{spunId}/fillers:
+    get:
+      tags: [Anime]
+      summary: Get anime filler episodes
+      operationId: getAnimeFillers
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/SpunId'
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '404':
+          $ref: '#/components/responses/InvalidId'
+
+  /anime/{spunId}/franchise:
+    get:
+      tags: [Anime]
+      summary: Get anime franchise information
+      operationId: getAnimeFranchise
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/SpunId'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '404':
+          $ref: '#/components/responses/InvalidId'
+
+  /anime/{spunId}/characters:
+    get:
+      tags: [Anime]
+      summary: Get anime characters
+      operationId: getAnimeCharacters
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/SpunId'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '404':
+          $ref: '#/components/responses/InvalidId'
+
+  /anime/{spunId}/related:
+    get:
+      tags: [Anime]
+      summary: Get related anime
+      operationId: getAnimeRelated
+      description: Redirects with HTTP 307 to /info/{spunId}/related.
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/SpunId'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '307':
+          description: Redirect to the related metadata route.
+          headers:
+            Location:
+              schema:
+                type: string
+
+  /similar/movie/{spunId}:
+    get:
+      tags: [Similar]
+      summary: Get similar movies
+      operationId: getSimilarMovies
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/SpunId'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '404':
+          $ref: '#/components/responses/InvalidId'
+
+  /similar/tv/{spunId}:
+    get:
+      tags: [Similar]
+      summary: Get similar TV titles
+      operationId: getSimilarTv
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/SpunId'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '404':
+          $ref: '#/components/responses/InvalidId'
+
+  /similar/anime/{spunId}:
+    get:
+      tags: [Similar]
+      summary: Get similar anime
+      operationId: getSimilarAnime
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/SpunId'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '404':
+          $ref: '#/components/responses/InvalidId'
+
+  /stream/{type}/{spunId}/{season}/{episode}:
+    get:
+      tags: [Streaming]
+      summary: Get a stream for a TV or anime episode
+      operationId: getEpisodeStream
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/ContentType'
+        - $ref: '#/components/parameters/SpunId'
+        - $ref: '#/components/parameters/Season'
+        - $ref: '#/components/parameters/Episode'
+        - $ref: '#/components/parameters/QualityOptional'
+        - $ref: '#/components/parameters/AudioOptional'
+      responses:
+        '200':
+          $ref: '#/components/responses/StreamResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/InvalidId'
+        '503':
+          $ref: '#/components/responses/StreamsUnavailable'
+
+  /stream/anime/{spunId}/{episode}:
+    get:
+      tags: [Streaming]
+      summary: Get an anime episode stream
+      operationId: getAnimeEpisodeStream
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/SpunId'
+        - $ref: '#/components/parameters/Episode'
+        - $ref: '#/components/parameters/QualityOptional'
+        - $ref: '#/components/parameters/AudioOptional'
+      responses:
+        '200':
+          $ref: '#/components/responses/StreamResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/StreamsUnavailable'
+
+  /stream/{type}/{spunId}:
+    get:
+      tags: [Streaming]
+      summary: Get a movie or content stream
+      operationId: getTypedStream
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/ContentType'
+        - $ref: '#/components/parameters/SpunId'
+        - $ref: '#/components/parameters/SeasonOptional'
+        - $ref: '#/components/parameters/EpisodeOptional'
+        - $ref: '#/components/parameters/QualityOptional'
+        - $ref: '#/components/parameters/AudioOptional'
+      responses:
+        '200':
+          $ref: '#/components/responses/StreamResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/StreamsUnavailable'
+
+  /stream/{spunId}:
+    get:
+      tags: [Streaming]
+      summary: Get a stream with type inferred from the catalogue
+      operationId: getInferredStream
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/SpunId'
+        - $ref: '#/components/parameters/SeasonOptional'
+        - $ref: '#/components/parameters/EpisodeOptional'
+        - $ref: '#/components/parameters/QualityOptional'
+        - $ref: '#/components/parameters/AudioOptional'
+      responses:
+        '200':
+          $ref: '#/components/responses/StreamResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/StreamsUnavailable'
+
+  /download/{type}/{spunId}/{season}/{episode}:
+    get:
+      tags: [Downloads]
+      summary: Get a download for a TV or anime episode
+      operationId: getEpisodeDownload
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/ContentType'
+        - $ref: '#/components/parameters/SpunId'
+        - $ref: '#/components/parameters/Season'
+        - $ref: '#/components/parameters/Episode'
+        - $ref: '#/components/parameters/QualityOptional'
+        - $ref: '#/components/parameters/LanguageOptional'
+      responses:
+        '200':
+          $ref: '#/components/responses/DownloadResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/DownloadsUnavailable'
+
+  /download/anime/{spunId}/{episode}:
+    get:
+      tags: [Downloads]
+      summary: Get an anime episode download
+      operationId: getAnimeEpisodeDownload
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/SpunId'
+        - $ref: '#/components/parameters/Episode'
+        - $ref: '#/components/parameters/QualityOptional'
+        - $ref: '#/components/parameters/LanguageOptional'
+      responses:
+        '200':
+          $ref: '#/components/responses/DownloadResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/DownloadsUnavailable'
+
+  /download/{type}/{spunId}:
+    get:
+      tags: [Downloads]
+      summary: Get a typed movie, TV, or anime download
+      operationId: getTypedDownload
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/ContentType'
+        - $ref: '#/components/parameters/SpunId'
+        - $ref: '#/components/parameters/SeasonOptional'
+        - $ref: '#/components/parameters/EpisodeOptional'
+        - $ref: '#/components/parameters/QualityOptional'
+        - $ref: '#/components/parameters/LanguageOptional'
+      responses:
+        '200':
+          $ref: '#/components/responses/DownloadResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/DownloadsUnavailable'
+
+  /download/{spunId}:
+    get:
+      tags: [Downloads]
+      summary: Get a download with type inferred from the catalogue
+      operationId: getInferredDownload
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/SpunId'
+        - $ref: '#/components/parameters/SeasonOptional'
+        - $ref: '#/components/parameters/EpisodeOptional'
+        - $ref: '#/components/parameters/QualityOptional'
+        - $ref: '#/components/parameters/LanguageOptional'
+      responses:
+        '200':
+          $ref: '#/components/responses/DownloadResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '503':
+          $ref: '#/components/responses/DownloadsUnavailable'
+
+  /subtitles/{spunId}:
+    get:
+      tags: [Subtitles]
+      summary: Get subtitle tracks
+      operationId: getSubtitles
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/SpunId'
+        - $ref: '#/components/parameters/SeasonOptional'
+        - $ref: '#/components/parameters/EpisodeOptional'
+        - $ref: '#/components/parameters/LanguageOptional'
+      responses:
+        '200':
+          $ref: '#/components/responses/SubtitleResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/InvalidId'
+        '503':
+          $ref: '#/components/responses/ServiceOffline'
+
+  /proxy/stream:
+    get:
+      tags: [Proxy]
+      summary: Proxy an approved HLS stream
+      operationId: proxyStream
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/ProxyToken'
+      responses:
+        '200':
+          description: Proxied media manifest or segment response.
+          content:
+            application/vnd.apple.mpegurl:
+              schema:
+                type: string
+            video/mp2t:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/ProxyTokenInvalid'
+        '403':
+          $ref: '#/components/responses/ProxyUpstreamNotAllowed'
+        '413':
+          $ref: '#/components/responses/ProxyManifestTooLarge'
+        '502':
+          $ref: '#/components/responses/ProxyUpstreamUnavailable'
+
+  /proxy/subtitles:
+    get:
+      tags: [Proxy]
+      summary: Proxy and convert an approved subtitle archive
+      operationId: proxySubtitles
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/ProxyToken'
+      responses:
+        '200':
+          description: WebVTT subtitle content.
+          content:
+            text/vtt:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/ProxyTokenInvalid'
+        '502':
+          $ref: '#/components/responses/UpstreamError'
+
+  /franchise:
+    get:
+      tags: [Franchises]
+      summary: List curated franchises
+      operationId: listFranchises
+      security:
+        - UserKey: []
+        - AdminKey: []
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+
+  /franchise/{reference}:
+    get:
+      tags: [Franchises]
+      summary: Get a curated franchise
+      operationId: getFranchise
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/FranchiseReference'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /home:
+    get:
+      tags: [Home]
+      summary: Get the general homepage snapshot
+      operationId: getGeneralHome
+      security:
+        - UserKey: []
+        - AdminKey: []
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '503':
+          $ref: '#/components/responses/ServiceOffline'
+
+  /home/movie:
+    get:
+      tags: [Home]
+      summary: Get the movie homepage snapshot
+      operationId: getMovieHome
+      security:
+        - UserKey: []
+        - AdminKey: []
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '503':
+          $ref: '#/components/responses/ServiceOffline'
+
+  /home/tv:
+    get:
+      tags: [Home]
+      summary: Get the TV homepage snapshot
+      operationId: getTvHome
+      security:
+        - UserKey: []
+        - AdminKey: []
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '503':
+          $ref: '#/components/responses/ServiceOffline'
+
+  /home/anime:
+    get:
+      tags: [Home]
+      summary: Get the anime homepage snapshot
+      operationId: getAnimeHome
+      security:
+        - UserKey: []
+        - AdminKey: []
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '503':
+          $ref: '#/components/responses/ServiceOffline'
+
+  /home/status:
+    get:
+      tags: [Home]
+      summary: Get homepage build status
+      operationId: getHomeStatus
+      security:
+        - UserKey: []
+        - AdminKey: []
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /trending:
+    get:
+      tags: [Discovery]
+      summary: Flat alias for trending discovery
+      operationId: getTrendingAlias
+      description: Redirects with HTTP 307 to /discover/trending.
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/DiscoveryType'
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '307':
+          description: Redirect to the canonical discovery route.
+          headers:
+            Location:
+              schema:
+                type: string
+
+  /popular:
+    get:
+      tags: [Discovery]
+      summary: Flat alias for popular discovery
+      operationId: getPopularAlias
+      description: Redirects with HTTP 307 to /discover/popular.
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/DiscoveryType'
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '307':
+          description: Redirect to the canonical discovery route.
+          headers:
+            Location:
+              schema:
+                type: string
+
+  /new:
+    get:
+      tags: [Discovery]
+      summary: Flat alias for new discovery
+      operationId: getNewAlias
+      description: Redirects with HTTP 307 to /discover/new.
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/DiscoveryType'
+        - $ref: '#/components/parameters/Page'
+      responses:
+        '307':
+          description: Redirect to the canonical discovery route.
+          headers:
+            Location:
+              schema:
+                type: string
+
+  /genres:
+    get:
+      tags: [Discovery]
+      summary: Flat alias for discovery genres
+      operationId: getGenresAlias
+      description: Redirects with HTTP 307 to /discover/genres.
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/GenreTypeOptional'
+      responses:
+        '307':
+          description: Redirect to the canonical discovery route.
+          headers:
+            Location:
+              schema:
+                type: string
+
+  /studios:
+    get:
+      tags: [Discovery]
+      summary: Flat alias for discovery studios
+      operationId: getStudiosAlias
+      description: Redirects with HTTP 307 to /discover/studios.
+      security:
+        - UserKey: []
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/CategoryOptional'
+      responses:
+        '307':
+          description: Redirect to the canonical discovery route.
+          headers:
+            Location:
+              schema:
+                type: string
+
+  /admin:
+    get:
+      tags: [Administration]
+      summary: List administrative endpoints
+      operationId: listAdminEndpoints
+      security:
+        - AdminKey: []
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /admin/home/build:
+    post:
+      tags: [Administration]
+      summary: Build a homepage snapshot
+      operationId: adminBuildHome
+      security:
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/HomeTypeOptional'
+        - $ref: '#/components/parameters/WaitOptional'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /admin/home/backfill:
+    post:
+      tags: [Administration]
+      summary: Backfill metadata summaries
+      operationId: adminBackfillHome
+      security:
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/LimitOptional'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /admin/home/warm-cache:
+    post:
+      tags: [Administration]
+      summary: Warm homepage cache
+      operationId: adminWarmHomeCache
+      security:
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/HomeTypeOptional'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /admin/cache/clear:
+    post:
+      tags: [Administration]
+      summary: Clear API cache
+      operationId: adminClearCache
+      security:
+        - AdminKey: []
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /admin/franchise/register:
+    post:
+      tags: [Administration]
+      summary: Register curated franchises
+      operationId: adminRegisterFranchise
+      security:
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/FranchiseIdOptional'
+        - $ref: '#/components/parameters/FranchiseReferenceOptional'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /admin/diagnostics/{provider}/{type}:
+    get:
+      tags: [Administration]
+      summary: Run an allowlisted provider diagnostic
+      operationId: adminDiagnostics
+      security:
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/Provider'
+        - $ref: '#/components/parameters/ContentType'
+        - $ref: '#/components/parameters/DiagnosticTitle'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceOffline'
+
+  /admin/logs:
+    get:
+      tags: [Administration]
+      summary: List archived daily logs
+      operationId: adminListLogs
+      security:
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/LogServiceOptional'
+        - $ref: '#/components/parameters/DateFromOptional'
+        - $ref: '#/components/parameters/DateToOptional'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/LimitOptional'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /admin/logs/{service}/{date}:
+    get:
+      tags: [Administration]
+      summary: Read an archived daily log
+      operationId: adminReadLog
+      security:
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/LogService'
+        - $ref: '#/components/parameters/Date'
+        - $ref: '#/components/parameters/LogLevelOptional'
+        - $ref: '#/components/parameters/LogNamespaceOptional'
+      responses:
+        '200':
+          description: Plain-text archived log content.
+          content:
+            text/plain:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /admin/logs/upload:
+    post:
+      tags: [Administration]
+      summary: Upload or replace an archived log
+      operationId: adminUploadLog
+      security:
+        - AdminKey: []
+        - LogUploadKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogUploadRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+
+  /admin/logs/flush:
+    post:
+      tags: [Administration]
+      summary: Flush and archive a running service log
+      operationId: adminFlushLogs
+      security:
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/LogServiceOptional'
+        - $ref: '#/components/parameters/DateOptional'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /admin/keys/list:
+    get:
+      tags: [Administration]
+      summary: List masked API keys
+      operationId: adminListKeys
+      security:
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/StatusOptional'
+        - $ref: '#/components/parameters/AccountIdOptional'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/LimitOptional'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /admin/accounts/create:
+    post:
+      tags: [Administration]
+      summary: Create a local account record
+      operationId: adminCreateAccount
+      security:
+        - AdminKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountCreateRequest'
+      responses:
+        '201':
+          $ref: '#/components/responses/AccountCreated'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/AccountConflict'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /admin/accounts/{accountId}/keys/list:
+    get:
+      tags: [Administration]
+      summary: List keys for an account
+      operationId: adminListAccountKeys
+      security:
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+        - $ref: '#/components/parameters/StatusOptional'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/LimitOptional'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/AccountNotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /admin/accounts/{accountId}/keys/gen:
+    post:
+      tags: [Administration]
+      summary: Generate an API key for an account
+      operationId: adminGenerateAccountKey
+      security:
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApiKeyGenerateRequest'
+      responses:
+        '201':
+          $ref: '#/components/responses/ApiKeyCreated'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/AccountNotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /admin/keys/{keyId}:
+    get:
+      tags: [Administration]
+      summary: Get masked API-key metadata
+      operationId: adminGetKey
+      security:
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/KeyId'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '404':
+          $ref: '#/components/responses/ApiKeyNotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /admin/keys/{keyId}/revoke:
+    post:
+      tags: [Administration]
+      summary: Permanently revoke an API key
+      operationId: adminRevokeKey
+      security:
+        - AdminKey: []
+      parameters:
+        - $ref: '#/components/parameters/KeyId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApiKeyRevokeRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/ApiKeyNotFound'
+        '409':
+          $ref: '#/components/responses/KeyAlreadyRevoked'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /account/me:
+    get:
+      tags: [Account]
+      summary: Get the current customer account
+      operationId: getCurrentAccount
+      security:
+        - UserSession: []
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '401':
+          $ref: '#/components/responses/UserAuthRequired'
+
+  /account/keys/list:
+    get:
+      tags: [Account]
+      summary: List the current customer account keys
+      operationId: listCurrentAccountKeys
+      security:
+        - UserSession: []
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '401':
+          $ref: '#/components/responses/UserAuthRequired'
+
+  /account/keys/gen:
+    post:
+      tags: [Account]
+      summary: Generate a key for the current customer account
+      operationId: generateCurrentAccountKey
+      security:
+        - UserSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApiKeyGenerateRequest'
+      responses:
+        '201':
+          $ref: '#/components/responses/ApiKeyCreated'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/UserAuthRequired'
+
+  /account/keys/{id}:
+    get:
+      tags: [Account]
+      summary: Get a customer-owned API key
+      operationId: getCurrentAccountKey
+      security:
+        - UserSession: []
+      parameters:
+        - $ref: '#/components/parameters/KeyIdShort'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '401':
+          $ref: '#/components/responses/UserAuthRequired'
+        '404':
+          $ref: '#/components/responses/ApiKeyNotFound'
+
+  /account/keys/{id}/revoke:
+    post:
+      tags: [Account]
+      summary: Revoke a customer-owned API key
+      operationId: revokeCurrentAccountKey
+      security:
+        - UserSession: []
+      parameters:
+        - $ref: '#/components/parameters/KeyIdShort'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApiKeyRevokeRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/GenericJson'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/UserAuthRequired'
+        '404':
+          $ref: '#/components/responses/ApiKeyNotFound'
+
+  /internal/accounts/{authSubject}:
+    put:
+      tags: [Internal]
+      summary: Synchronize an account from the authentication service
+      operationId: syncInternalAccount
+      security:
+        - InternalsKey: []
+      parameters:
+        - $ref: '#/components/parameters/AuthSubject'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccountSyncRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/AccountSync'
+        '201':
+          $ref: '#/components/responses/AccountSync'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/AccountConflict'
+
+components:
+  securitySchemes:
+    UserKey:
+      type: apiKey
+      in: header
+      name: X-User-Key
+      description: Protected public-route credential in the form spn_<random-alphanumeric>.
+    AdminKey:
+      type: apiKey
+      in: header
+      name: X-Admin-Key
+      description: Operator credential for administration and public-route testing.
+    InternalsKey:
+      type: apiKey
+      in: header
+      name: X-Internals-Key
+      description: Trusted Worker-to-service credential.
+    LogUploadKey:
+      type: apiKey
+      in: header
+      name: X-Log-Upload-Key
+      description: Optional dedicated credential for the administrative log-upload route.
+    UserSession:
+      type: http
+      scheme: bearer
+      bearerFormat: session
+      description: Spün Auth customer session. The current v1 adapter fails closed until configured.
+
+  parameters:
+    SpunId:
+      name: spunId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[a-z0-9]+(?:-[a-z0-9]+)*-[0-9]{6}$'
+      description: Canonical Spün ID in title-slug-XXXXXX form.
+    Namespace:
+      name: namespace
+      in: path
+      required: true
+      schema:
+        type: string
+      description: External identifier namespace, such as tmdb, imdb, tvdb, anilist, mal, kitsu, or moviebox.
+    ExternalId:
+      name: id
+      in: query
+      required: true
+      schema:
+        type: string
+      description: Identifier in the selected resolver namespace.
+    SearchQuery:
+      name: q
+      in: query
+      required: true
+      schema:
+        type: string
+        minLength: 2
+      description: Search text. Spaces and punctuation are supported.
+    Page:
+      name: page
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 1
+    LimitOptional:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 25
+    ContentType:
+      name: type
+      in: path
+      required: true
+      schema:
+        type: string
+        enum: [movie, tv, anime]
+    ContentTypeOptional:
+      name: type
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [movie, tv, anime]
+    SearchType:
+      name: type
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [all, movie, tv, anime]
+        default: all
+    DiscoveryType:
+      name: type
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [all, movie, tv, anime]
+        default: all
+    GenreTypeOptional:
+      name: type
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [movie, tv, anime]
+    GenreFilter:
+      name: genre
+      in: query
+      required: false
+      schema:
+        type: string
+    StudioFilter:
+      name: studio
+      in: query
+      required: false
+      schema:
+        type: string
+    CategoryOptional:
+      name: category
+      in: query
+      required: false
+      schema:
+        type: string
+    StudioId:
+      name: studioId
+      in: path
+      required: true
+      schema:
+        type: string
+    AnimeStudioId:
+      name: studioId
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+    Year:
+      name: year
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1900
+        maximum: 2100
+    AnimeSeason:
+      name: season
+      in: path
+      required: true
+      schema:
+        type: string
+        enum: [WINTER, SPRING, SUMMER, FALL]
+    Season:
+      name: season
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+    SeasonOptional:
+      name: season
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+    Episode:
+      name: episode
+      in: path
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+    EpisodeOptional:
+      name: episode
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+    QualityOptional:
+      name: quality
+      in: query
+      required: false
+      schema:
+        type: string
+    AudioOptional:
+      name: audio
+      in: query
+      required: false
+      schema:
+        type: string
+    LanguageOptional:
+      name: lang
+      in: query
+      required: false
+      schema:
+        type: string
+    AnimeFormat:
+      name: format
+      in: path
+      required: true
+      schema:
+        type: string
+    AnimeDemographic:
+      name: demographic
+      in: path
+      required: true
+      schema:
+        type: string
+    AnimeSource:
+      name: source
+      in: path
+      required: true
+      schema:
+        type: string
+    AnimeGenre:
+      name: genre
+      in: path
+      required: true
+      schema:
+        type: string
+    SearchFilterOptional:
+      name: q
+      in: query
+      required: false
+      schema:
+        type: string
+    ProxyToken:
+      name: t
+      in: query
+      required: true
+      schema:
+        type: string
+      description: Opaque signed proxy token generated by the API.
+    FranchiseReference:
+      name: reference
+      in: path
+      required: true
+      schema:
+        type: string
+    HomeTypeOptional:
+      name: type
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [all, movie, tv, anime]
+        default: all
+    WaitOptional:
+      name: wait
+      in: query
+      required: false
+      schema:
+        type: boolean
+        default: false
+    FranchiseIdOptional:
+      name: id
+      in: query
+      required: false
+      schema:
+        type: string
+    FranchiseReferenceOptional:
+      name: franchise
+      in: query
+      required: false
+      schema:
+        type: string
+    Provider:
+      name: provider
+      in: path
+      required: true
+      schema:
+        type: string
+    DiagnosticTitle:
+      name: title
+      in: query
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    LogService:
+      name: service
+      in: path
+      required: true
+      schema:
+        type: string
+        enum: [metadata, providers]
+    LogServiceOptional:
+      name: service
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [metadata, providers]
+        default: providers
+    Date:
+      name: date
+      in: path
+      required: true
+      schema:
+        type: string
+        format: date
+    DateOptional:
+      name: date
+      in: query
+      required: false
+      schema:
+        type: string
+        format: date
+    DateFromOptional:
+      name: from
+      in: query
+      required: false
+      schema:
+        type: string
+        format: date
+    DateToOptional:
+      name: to
+      in: query
+      required: false
+      schema:
+        type: string
+        format: date
+    LogLevelOptional:
+      name: level
+      in: query
+      required: false
+      schema:
+        type: string
+    LogNamespaceOptional:
+      name: namespace
+      in: query
+      required: false
+      schema:
+        type: string
+    StatusOptional:
+      name: status
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [active, revoked]
+    AccountId:
+      name: accountId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AccountIdOptional:
+      name: account_id
+      in: query
+      required: false
+      schema:
+        type: string
+        format: uuid
+    KeyId:
+      name: keyId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    KeyIdShort:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    AuthSubject:
+      name: authSubject
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+
+  schemas:
+    ErrorBody:
+      type: object
+      required: [code, error, description, action]
+      properties:
+        code:
+          type: string
+        error:
+          type: string
+        description:
+          type: string
+        action:
+          type: string
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorBody'
+    GenericJson:
+      type: object
+      additionalProperties: true
+    ContentItem:
+      type: object
+      additionalProperties: true
+      properties:
+        spun_id:
+          type: string
+        type:
+          type: string
+          enum: [movie, tv, anime]
+        title:
+          type: string
+        year:
+          type: integer
+          nullable: true
+        rating:
+          type: number
+          nullable: true
+        poster:
+          type: string
+          nullable: true
+    ContentItemResponse:
+      allOf:
+        - $ref: '#/components/schemas/ContentItem'
+    SearchResponse:
+      type: object
+      required: [results]
+      properties:
+        page:
+          type: integer
+        total_pages:
+          type: integer
+        total_results:
+          type: integer
+        total_pages_exact:
+          type: boolean
+        total_results_exact:
+          type: boolean
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContentItem'
+    DiscoverResponse:
+      type: object
+      required: [page, has_more, results]
+      properties:
+        page:
+          type: integer
+        has_more:
+          type: boolean
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContentItem'
+    StreamOption:
+      type: object
+      additionalProperties: true
+      properties:
+        quality:
+          type: string
+        format:
+          type: string
+        audio:
+          type: string
+        url:
+          type: string
+          format: uri
+    StreamResponse:
+      type: object
+      required: [spun_id, streams, subtitles]
+      properties:
+        spun_id:
+          type: string
+        title:
+          type: string
+        type:
+          type: string
+          enum: [movie, tv, anime]
+        streams:
+          type: array
+          items:
+            $ref: '#/components/schemas/StreamOption'
+        subtitles:
+          type: array
+          items:
+            $ref: '#/components/schemas/SubtitleTrack'
+    DownloadOption:
+      allOf:
+        - $ref: '#/components/schemas/StreamOption'
+        - type: object
+          properties:
+            filename:
+              type: string
+            size:
+              type: string
+    DownloadResponse:
+      type: object
+      required: [spun_id, downloads, subtitles]
+      properties:
+        spun_id:
+          type: string
+        title:
+          type: string
+        type:
+          type: string
+          enum: [movie, tv, anime]
+        downloads:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        subtitles:
+          type: array
+          items:
+            $ref: '#/components/schemas/SubtitleTrack'
+    SubtitleTrack:
+      type: object
+      additionalProperties: true
+      properties:
+        language:
+          type: string
+        language_code:
+          type: string
+        label:
+          type: string
+        format:
+          type: string
+          enum: [vtt]
+        url:
+          type: string
+          format: uri
+    HealthResponse:
+      type: object
+      additionalProperties: true
+      required: [status, services]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, down, unknown]
+        services:
+          type: object
+          additionalProperties:
+            type: string
+    AccountCreateRequest:
+      type: object
+      required: [auth_subject]
+      properties:
+        auth_subject:
+          type: string
+          minLength: 1
+        email:
+          type: string
+          format: email
+          nullable: true
+        name:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [active, closed]
+          default: active
+    AccountSyncRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          nullable: true
+        name:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [active, closed]
+    ApiKeyGenerateRequest:
+      type: object
+      required: [label]
+      properties:
+        label:
+          type: string
+          minLength: 1
+          maxLength: 100
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Null means the key does not expire automatically. Omit to use the active policy default.
+    ApiKeyRevokeRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+    LogUploadRequest:
+      type: object
+      required: [service, date, content]
+      properties:
+        service:
+          type: string
+          enum: [metadata, providers]
+        date:
+          type: string
+          format: date
+        content:
+          type: string
+          description: Log content. The request is limited to 5 MiB.
+
+  responses:
+    GenericJson:
+      description: JSON response defined by the operation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/GenericJson'
+    HealthResponse:
+      description: Health status.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/HealthResponse'
+    SearchResponse:
+      description: Search results.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SearchResponse'
+    DiscoverResponse:
+      description: Discovery results.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DiscoverResponse'
+    ContentItemResponse:
+      description: Unified content item.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ContentItemResponse'
+    StreamResponse:
+      description: Normalized streams and subtitle tracks.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StreamResponse'
+    DownloadResponse:
+      description: Normalized downloads and downloadable subtitle tracks.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DownloadResponse'
+    SubtitleResponse:
+      description: Subtitle tracks with ready-to-use VTT URLs.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [spun_id, subtitles]
+            properties:
+              spun_id:
+                type: string
+              subtitles:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SubtitleTrack'
+    AccountCreated:
+      description: Account created.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [success, action, account]
+            properties:
+              success:
+                type: boolean
+              action:
+                type: string
+              account:
+                type: object
+                additionalProperties: true
+    AccountSync:
+      description: Account synchronized.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+    ApiKeyCreated:
+      description: API key generated. The full key is returned only once.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+    Error:
+      description: Structured API error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    BadRequest:
+      description: Invalid request, parameter, or body.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    Unauthorized:
+      description: Missing or invalid credential.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    UserAuthRequired:
+      description: Spün Auth customer session required.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    Forbidden:
+      description: Authenticated caller is not permitted to perform the operation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    InvalidId:
+      description: Spün ID does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    InvalidStudio:
+      description: Studio does not exist or is invalid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    ResolveNotFound:
+      description: Resolver namespace or content was not found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    ResolveConflict:
+      description: Resolver conflict or ambiguous registration.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    UpstreamError:
+      description: Upstream service failure.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    GatewayTimeout:
+      description: Upstream metadata operation timed out.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    ServiceOffline:
+      description: Required infrastructure is unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    StreamsUnavailable:
+      description: No playable stream was found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    DownloadsUnavailable:
+      description: No usable download was found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    ProxyTokenInvalid:
+      description: Proxy token is invalid or expired.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    ProxyUpstreamNotAllowed:
+      description: Upstream target failed proxy safety validation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    ProxyManifestTooLarge:
+      description: HLS manifest exceeded proxy limits.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    ProxyUpstreamUnavailable:
+      description: Approved upstream media source is unavailable.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    PayloadTooLarge:
+      description: Request body exceeded the endpoint limit.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    AccountNotFound:
+      description: Account does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    AccountConflict:
+      description: Account identity conflicts with an existing record.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    ApiKeyNotFound:
+      description: API key does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    KeyAlreadyRevoked:
+      description: API key has already been revoked.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
