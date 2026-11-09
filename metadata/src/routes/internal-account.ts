@@ -3,7 +3,7 @@ import type { AccountHonoEnv } from '../account-auth.js';
 import { requireInternal } from '../account-auth.js';
 import { getDb } from '../db.js';
 import { errorResponse, jsonResponse } from '../normalizer.js';
-import { upsertAccount } from '../../../account/store.js';
+import { upsertAccount } from '../../../core/account/store.js';
 
 const internalAccount = new Hono<AccountHonoEnv>();
 

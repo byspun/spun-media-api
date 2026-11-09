@@ -12,6 +12,6 @@
     "skipLibCheck":      true,
     "esModuleInterop":   true
   },
-    "include": ["./**/*.ts", "../logs/**/*.ts"],
+    "include": ["./**/*.ts", "../core/logs/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

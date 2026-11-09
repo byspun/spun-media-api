@@ -2,11 +2,11 @@ import type { Context, Next } from 'hono';
 import type { Env } from './types/env.js';
 import { getDb } from './db.js';
 import { errorResponse } from './normalizer.js';
-import { secureEqual, hashApiKey } from '../../account/keys/crypto.js';
-import { getAccountByAuthSubject, getAccountById, findApiKeyByHash, touchApiKey } from '../../account/store.js';
-import { spunAuthAdapter, AuthAdapterNotConfiguredError } from '../../account/auth/spun.js';
-import { readAdminKey, readInternalsKey, readUserKey } from '../../account/auth/headers.js';
-import type { AuthPrincipal, AuthSession } from '../../account/types.js';
+import { secureEqual, hashApiKey } from '../../core/account/keys/crypto.js';
+import { getAccountByAuthSubject, getAccountById, findApiKeyByHash, touchApiKey } from '../../core/account/store.js';
+import { spunAuthAdapter, AuthAdapterNotConfiguredError } from '../../core/account/auth/spun.js';
+import { readAdminKey, readInternalsKey, readUserKey } from '../../core/account/auth/headers.js';
+import type { AuthPrincipal, AuthSession } from '../../core/account/types.js';
 
 export type AccountHonoEnv = {
   Bindings: Env;

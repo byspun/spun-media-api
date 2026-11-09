@@ -55,7 +55,7 @@ app.use('*', async (c, next) => {
 
 // ─── /v1 routes ───────────────────────────────────────────────────────────────
 
-const v1 = new Hono<{ Bindings: Env; Variables: { 'spun.principal': import('../../account/types.js').AuthPrincipal; 'spun.session': import('../../account/types.js').AuthSession } }>();
+const v1 = new Hono<{ Bindings: Env; Variables: { 'spun.principal': import('../../core/account/types.js').AuthPrincipal; 'spun.session': import('../../core/account/types.js').AuthSession } }>();
 
 v1.use('*', authenticatePublic);
 

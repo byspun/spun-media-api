@@ -12,8 +12,8 @@ import {
   revokeApiKey,
   upsertAccount,
   countActiveKeys,
-} from '../../../account/store.js';
-import { policyFromEnv } from '../../../account/policy.js';
+} from '../../../core/account/store.js';
+import { policyFromEnv } from '../../../core/account/policy.js';
 
 const account = new Hono<AccountHonoEnv>();
 

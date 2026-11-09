@@ -1,4 +1,4 @@
-import { createLogger, type LogLevel } from '../../logs/logger.js';
+import { createLogger, type LogLevel } from '../../core/logs/logger.js';
 import { appendLogLine } from './log-archive.js';
 import type { Env } from './types/env.js';
 

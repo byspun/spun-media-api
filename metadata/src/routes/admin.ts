@@ -13,7 +13,7 @@ import { registerCuratedFranchises } from '../franchise-registration.js';
 import { listLogArchives, readLogArchive, replaceLogArchive } from '../log-archive.js';
 import { metadataLogger } from '../logger.js';
 import { getDb } from '../db.js';
-import { createApiKey, getAccountById, getApiKeyById, listApiKeys, revokeApiKey } from '../../../account/store.js';
+import { createApiKey, getAccountById, getApiKeyById, listApiKeys, revokeApiKey } from '../../../core/account/store.js';
 
 const admin = new Hono<{ Bindings: Env }>();
 
