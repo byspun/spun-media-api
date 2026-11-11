@@ -1,6 +1,6 @@
-import { attachSubtitles } from '../normalizer.js';
+import { attachSubtitles } from './internal/normalizer.js';
 import { buildTitles, dedupeStreams, dedupeSubtitles, fetchJson, fetchText, getAniListMedia, safeStream, safeSubtitle, bestTitleScore, UA } from './anivexa-utils.js';
-import type { AnimeProviderInput, RawStream, RawSubtitle } from '../shared/types.js';
+import type { AnimeProviderInput, RawStream, RawSubtitle } from './internal/types.js';
 
 const BASE = 'https://reanime.to';
 const FLIX = 'https://flixcloud.cc';

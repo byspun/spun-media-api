@@ -1,6 +1,6 @@
-import { attachSubtitles } from '../normalizer.js';
+import { attachSubtitles } from './internal/normalizer.js';
 import { bestTitleScore, decodeEntities, dedupeStreams, fetchText, getAniListMedia, safeStream, buildTitles, stripTags, attr } from './anivexa-utils.js';
-import type { AnimeProviderInput, RawStream } from '../shared/types.js';
+import type { AnimeProviderInput, RawStream } from './internal/types.js';
 
 const BASE = 'https://www.animegg.org';
 

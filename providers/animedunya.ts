@@ -1,6 +1,6 @@
-import { attachSubtitles } from '../normalizer.js';
+import { attachSubtitles } from './internal/normalizer.js';
 import { dedupeStreams, dedupeSubtitles, fetchText, getAniListMedia, safeStream, safeSubtitle } from './anivexa-utils.js';
-import type { AnimeProviderInput, RawStream, RawSubtitle } from '../shared/types.js';
+import type { AnimeProviderInput, RawStream, RawSubtitle } from './internal/types.js';
 
 const BASE = 'https://anime-dunya.com';
 

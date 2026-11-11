@@ -1,6 +1,6 @@
-import { attachSubtitles } from '../normalizer.js';
-import { detectFormat, isSafeHttpUrl, uniqueBy } from '../mapper.js';
-import type { AnimeProviderInput, RawStream, RawSubtitle } from '../shared/types.js';
+import { attachSubtitles } from './internal/normalizer.js';
+import { detectFormat, isSafeHttpUrl, uniqueBy } from './internal/utils.js';
+import type { AnimeProviderInput, RawStream, RawSubtitle } from './internal/types.js';
 
 const ANIKOTO = 'https://anikototv.to';
 const SPOOF_REF = 'https://hianimes.re/';

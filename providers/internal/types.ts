@@ -1,5 +1,18 @@
 // All shared provider-backend types. These are internal and are never exposed directly.
 
+/** Provider manifest entry shape (from manifest.json) */
+export interface ManifestProviderEntry {
+  name: string;
+  module: string;
+  enabled: boolean;
+  type?: unknown;
+  capabilities?: unknown;
+  supportedIds?: unknown;
+  priority_stream?: unknown;
+  priority_download?: unknown;
+  priority_subtitles?: unknown;
+}
+
 export type ProviderId =
   | 'moviebox' | 'daratech' | 'castle' | 'netmirror' | 'vidlink'
   | '4khdhub' | 'dvdplay' | 'streamflix'

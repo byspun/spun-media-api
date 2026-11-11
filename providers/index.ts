@@ -1,41 +1,14 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import 'dotenv/config';
-import { getCastleStreams as getMovieCastle } from './movies/castle.js';
-import { getNetmirrorStreams as getMovieNetmirror } from './movies/netmirror.js';
-import { getVidlinkStreams as getMovieVidlink } from './movies/vidlink.js';
-import { getDaratechStreams as getMovieDaratech } from './movies/daratech.js';
-import { getCastleStreams as getTvCastle } from './tv/castle.js';
-import { getNetmirrorStreams as getTvNetmirror } from './tv/netmirror.js';
-import { getVidlinkStreams as getTvVidlink } from './tv/vidlink.js';
-import { getDaratechStreams as getTvDaratech } from './tv/daratech.js';
-import { getMovieboxDownloads } from './downloads/moviebox.js';
-import { get4khdhubDownloads } from './downloads/4khdhub.js';
-import { getDvdplayDownloads } from './downloads/dvdplay.js';
-import { getStreamflixDownloads } from './downloads/streamflix.js';
-import { getAnikotoStreams } from './anime/anikoto.js';
-import { getKaaStreams } from './anime/kaa.js';
-import { getAnimeggStreams } from './anime/animegg.js';
-import { getReanimeStreams } from './anime/reanime.js';
-import { getAnimedunyaStreams } from './anime/animedunya.js';
-import { getAninekoStreams } from './anime/anineko.js';
-import { getAnidbappStreams } from './anime/anidbapp.js';
-import { getAnibdStreams } from './anime/anibd.js';
-import { getMovieboxStreams as getMovieboxMovieStreams } from './movies/moviebox.js';
-import { getMovieboxStreams as getMovieboxTvStreams } from './tv/moviebox.js';
-import { attachedSubtitles, buildDownloadResponse, buildStreamResponse } from './normalizer.js';
-import { recordFailure, recordSuccess, isHealthy, getHealthRecords } from './health.js';
-import type { AnimeProviderInput, MovieProviderInput, ProviderId, RawDownload, RawStream, TvProviderInput } from './shared/types.js';
-import { runDaratechDiagnostic } from './diagnostics.js';
-import { providerLogger, startProviderLogArchiver, flushProviderLogs } from './logging.js';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { buildDownloadResponse, buildStreamResponse, attachedSubtitles } from './internal/normalizer.js';
+import { recordFailure, recordSuccess, isHealthy, getHealthRecords, healthMonitor } from './internal/health.js';
+import type { AnimeProviderInput, MovieProviderInput, ProviderCategory, ProviderHealthRecord, ProviderId, RawDownload, RawStream, RawSubtitle, TvProviderInput } from './internal/types.js';
+import { providerLogger, startProviderLogArchiver, flushProviderLogs } from './internal/logging.js';
 
 const app = Fastify({ logger: false, trustProxy: true });
-
-function safeProviderError(error: unknown): string {
-  return String(error instanceof Error ? error.message : error ?? 'unknown failure')
-    .replace(/https?:\/\/[^\s]+/g, '[upstream-url]')
-    .slice(0, 240);
-}
 
 const env = {
   internalsKey: process.env.INTERNALS_KEY ?? '',
@@ -44,8 +17,7 @@ const env = {
   daratechBase: process.env.DARATECH_API_BASE ?? 'https://apimovie.runflix.name.ng/v1',
   daratechKey: process.env.DARATECH_API_KEY ?? '',
   tmdbKey: process.env.TMDB_API_KEY ?? '',
-  diagnosticSecret: process.env.PROVIDER_DIAGNOSTIC_SECRET ?? '',
-  adminKey: process.env.ADMIN_KEY ?? process.env.PROVIDER_DIAGNOSTIC_SECRET ?? '',
+  adminKey: process.env.ADMIN_KEY ?? '',
 };
 
 providerLogger.info('startup', 'Streaming configuration loaded', {
@@ -55,6 +27,334 @@ providerLogger.info('startup', 'Streaming configuration loaded', {
   daratechConfigured: Boolean(env.daratechKey),
   adminKeyConfigured: Boolean(env.adminKey),
 });
+
+function safeProviderError(error: unknown): string {
+  return String(error instanceof Error ? error.message : error ?? 'unknown failure')
+    .replace(/https?:\/\/[^\s]+/g, '[upstream-url]')
+    .slice(0, 240);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Manifest-driven provider registry
+//
+// manifest.json is the single source of truth: which providers exist, which media
+// types and capabilities they serve, which ID systems they use for matching, and
+// the fallback order for each operation. Provider modules on disk are inert until
+// registered here. Conflicts are detected once at startup and never crash the layer.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type MediaType = 'movie' | 'tv' | 'anime';
+type ManifestMediaType = 'movies' | 'series' | 'anime';
+type Capability = 'streaming' | 'downloading' | 'subtitle';
+
+const PRIORITY_FIELD: Record<Exclude<Capability, 'subtitle'>, 'priority_stream' | 'priority_download'> = {
+  streaming: 'priority_stream',
+  downloading: 'priority_download',
+};
+
+interface ManifestProviderEntry {
+  name: string;
+  module: string;
+  enabled: boolean;
+  type?: unknown;
+  capabilities?: unknown;
+  supportedIds?: unknown;
+  priority_stream?: unknown;
+  priority_download?: unknown;
+  priority_subtitles?: unknown;
+}
+
+interface ScheduledProvider {
+  name: ProviderId;
+  module: string;
+  supportedIds: string[];
+  priority: number;
+}
+
+const VALID_MANIFEST_TYPES: ManifestMediaType[] = ['movies', 'series', 'anime'];
+const VALID_CAPABILITIES = ['streaming', 'downloading', 'subtitle'];
+const VALID_ID_SYSTEMS = ['tmdb', 'imdb', 'anilist', 'mal', 'moviebox'];
+
+function manifestTypeToCategory(value: ManifestMediaType): MediaType {
+  if (value === 'movies') return 'movie';
+  if (value === 'series') return 'tv';
+  return 'anime';
+}
+
+/** Strips // line comments from JSONC while leaving string literals intact. */
+function stripJsonComments(raw: string): string {
+  let out = '';
+  let inString = false;
+  let inLineComment = false;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    const next = raw[i + 1];
+    if (inLineComment) {
+      if (ch === '\n') { inLineComment = false; out += ch; }
+      continue;
+    }
+    if (!inString && ch === '/' && next === '/') { inLineComment = true; i++; continue; }
+    if (ch === '"' && raw[i - 1] !== '\\') inString = !inString;
+    out += ch;
+  }
+  return out;
+}
+
+function readManifestEntries(): ManifestProviderEntry[] {
+  const manifestPath = fileURLToPath(new URL('./manifest.json', import.meta.url));
+  const raw = fs.readFileSync(manifestPath, 'utf8');
+  const parsed = JSON.parse(stripJsonComments(raw)) as { providers?: ManifestProviderEntry[] };
+  if (!Array.isArray(parsed.providers)) {
+    throw new Error('manifest.json must contain a top-level "providers" array');
+  }
+  return parsed.providers;
+}
+
+class ProviderRegistry {
+  /** `${mediaType}:${capability}` -> providers in priority order (conflicts already removed). */
+  private scheduled = new Map<string, ScheduledProvider[]>();
+  private registeredNames = new Set<string>();
+
+  load(): void {
+    let entries: ManifestProviderEntry[] = [];
+    try {
+      entries = readManifestEntries();
+    } catch (error) {
+      providerLogger.error('manifest', `providers/manifest.json could not be read: ${safeProviderError(error)}`);
+      providerLogger.error('manifest', 'No providers are registered — every stream and download request will fall back to an empty result');
+      return;
+    }
+
+    // 1. Parse every entry; only enabled, structurally valid providers are scheduled.
+    for (const entry of entries) {
+      if (typeof entry.name !== 'string' || !entry.name) {
+        providerLogger.warn('manifest', 'Manifest entry without a "name" is ignored');
+        continue;
+      }
+      this.registeredNames.add(entry.name);
+      if (entry.enabled !== true) {
+        if (entry.enabled === false) {
+          providerLogger.info('manifest', `Provider "${entry.name}" is disabled in the manifest and is never loaded or called`);
+        } else {
+          providerLogger.warn('manifest', `Provider "${entry.name}" is missing a boolean "enabled" field and is treated as not registered`);
+        }
+        continue;
+      }
+      if (typeof entry.module !== 'string' || !entry.module) {
+        providerLogger.warn('manifest', `Provider "${entry.name}" has no "module" path and cannot be scheduled`);
+        continue;
+      }
+      if (!Array.isArray(entry.type) || entry.type.length === 0) {
+        providerLogger.warn('manifest', `Provider "${entry.name}" declares no media "type" and is skipped for every operation`);
+        continue;
+      }
+      if (!Array.isArray(entry.capabilities) || entry.capabilities.length === 0) {
+        providerLogger.warn('manifest', `Provider "${entry.name}" declares no "capabilities" and is skipped for every operation`);
+        continue;
+      }
+
+      const categories: MediaType[] = [];
+      for (const rawType of entry.type) {
+        if (typeof rawType === 'string' && (VALID_MANIFEST_TYPES as string[]).includes(rawType)) {
+          categories.push(manifestTypeToCategory(rawType as ManifestMediaType));
+        } else {
+          providerLogger.warn('manifest', `Provider "${entry.name}" has unknown media type "${String(rawType)}" — valid: ${VALID_MANIFEST_TYPES.join(', ')}`);
+        }
+      }
+      if (categories.length === 0) {
+        providerLogger.warn('manifest', `Provider "${entry.name}" has no valid media type after validation and is skipped for every operation`);
+        continue;
+      }
+
+      const supportedIds: string[] = [];
+      if (entry.supportedIds !== undefined) {
+        if (Array.isArray(entry.supportedIds) && entry.supportedIds.every((id) => typeof id === 'string' && (VALID_ID_SYSTEMS as string[]).includes(id))) {
+          supportedIds.push(...(entry.supportedIds as string[]));
+        } else {
+          providerLogger.warn('manifest', `Provider "${entry.name}" has an invalid "supportedIds" list — valid: ${VALID_ID_SYSTEMS.join(', ')} — treated as [] (title/fuzzy matching only)`);
+        }
+      }
+
+      for (const rawCapability of entry.capabilities) {
+        if (typeof rawCapability !== 'string' || !(VALID_CAPABILITIES as string[]).includes(rawCapability)) {
+          providerLogger.warn('manifest', `Provider "${entry.name}" has unknown capability "${String(rawCapability)}" — valid: ${VALID_CAPABILITIES.join(', ')}`);
+          continue;
+        }
+        const priority = this.readPriority(entry, rawCapability as Capability);
+        if (priority === null) continue; // missing/invalid priority: reported, provider skipped for this operation only
+        for (const category of categories) {
+          this.push(category, rawCapability as Capability, {
+            name: entry.name as ProviderId,
+            module: entry.module,
+            supportedIds,
+            priority,
+          });
+        }
+      }
+    }
+
+    // 2. Per (media type, capability): detect priority conflicts and order survivors.
+    this.resolveConflicts();
+  }
+
+  /** Returns the priority for a declared capability, or null after emitting a clear warning. */
+  private readPriority(entry: ManifestProviderEntry, capability: Capability): number | null {
+    if (capability === 'subtitle') {
+      // No provider delivers standalone subtitles yet; accept but do not schedule.
+      const raw = entry.priority_subtitles;
+      if (raw === undefined) {
+        providerLogger.warn('manifest', `Provider "${entry.name}" declares subtitle support without "priority_subtitles" — subtitles capability ignored for now`);
+        return null;
+      }
+      return typeof raw === 'number' && Number.isInteger(raw) && raw > 0 ? raw : null;
+    }
+    const field = PRIORITY_FIELD[capability];
+    const raw = entry[field];
+    if (raw === undefined || raw === null) {
+      providerLogger.warn('manifest', `Provider "${entry.name}" declares "${capability}" but has no "${field}" — skipped for this operation only (other operations still work)`);
+      return null;
+    }
+    const numeric = Number(raw);
+    if (!Number.isFinite(numeric) || numeric < 0) {
+      providerLogger.warn('manifest', `Provider "${entry.name}" has invalid ${field} "${String(raw)}" — must be a number >= 0 — skipped for this operation only (other operations still work)`);
+      return null;
+    }
+    return numeric;
+  }
+
+  private push(category: MediaType, capability: Capability, provider: ScheduledProvider): void {
+    const key = `${category}:${capability}`;
+    const list = this.scheduled.get(key);
+    if (list) list.push(provider);
+    else this.scheduled.set(key, [provider]);
+  }
+
+  /**
+   * Conflicting priorities (two enabled providers sharing a priority for the same
+   * media type + capability) are reported once at startup and every provider in the
+   * conflict is skipped for that operation only. Conflicts are never resolved
+   * silently by alphabetical order or manifest position, and unrelated capabilities
+   * of the same providers stay fully registered.
+   */
+  private resolveConflicts(): void {
+    for (const [key, providers] of this.scheduled) {
+      const [category, capability] = key.split(':') as [MediaType, Capability];
+      const byPriority = new Map<number, ScheduledProvider[]>();
+      for (const provider of providers) {
+        const group = byPriority.get(provider.priority);
+        if (group) group.push(provider);
+        else byPriority.set(provider.priority, [provider]);
+      }
+
+      const survivors: ScheduledProvider[] = [];
+      for (const [priority, group] of [...byPriority.entries()].sort((a, b) => a[0] - b[0])) {
+        if (group.length === 1) {
+          survivors.push(group[0]);
+          continue;
+        }
+        const names = group.map((provider) => provider.name).join(', ');
+        providerLogger.warn(
+          'manifest',
+          `Priority conflict: ${names} all claim priority ${priority} for ${capability} on ${category} — all are skipped for this operation only`,
+        );
+      }
+      this.scheduled.set(key, survivors);
+    }
+  }
+
+  /** Providers in manifest priority order for one media type + capability. */
+  getOrdered(category: MediaType, capability: Capability): ScheduledProvider[] {
+    return this.scheduled.get(`${category}:${capability}`) ?? [];
+  }
+
+  isRegistered(name: string): boolean {
+    return this.registeredNames.has(name);
+  }
+
+  getRegisteredNames(): string[] {
+    return [...this.registeredNames];
+  }
+}
+
+const registry = new ProviderRegistry();
+registry.load();
+providerLogger.info('manifest', `Provider manifest loaded — registered: ${registry.getRegisteredNames().join(', ') || '(none)'}`);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dynamic provider loading
+//
+// Modules are imported on demand (module cache resolves repeat loads) and the
+// expected export is resolved by provider name + capability. A module that fails
+// to load or lacks the export is reported and skipped, never crashing a request.
+// ─────────────────────────────────────────────────────────────────────────────
+
+type ProviderFn = (input: any, config?: any) => Promise<unknown>;
+
+const moduleCache = new Map<string, Record<string, unknown>>();
+
+/** Resolves the correct module extension for the current runtime (tsx vs node). */
+function resolveModuleSpecifier(specifier: string): string {
+  // In production (dist), modules are .js files; in dev (tsx), they're .ts files.
+  // The manifest always references .ts, so we swap extension based on __dirname.
+  if (import.meta.url.includes('/dist/')) {
+    return specifier.replace(/\.ts$/, '.js');
+  }
+  return specifier;
+}
+
+async function loadModule(specifier: string): Promise<Record<string, unknown> | null> {
+  const resolved = resolveModuleSpecifier(specifier);
+  const cached = moduleCache.get(resolved);
+  if (cached) return cached;
+  try {
+    const mod = (await import(resolved)) as Record<string, unknown>;
+    moduleCache.set(resolved, mod);
+    return mod;
+  } catch (error) {
+    providerLogger.error('manifest', `Provider module "${resolved}" failed to import: ${safeProviderError(error)}`);
+    return null;
+  }
+}
+
+function expectedExportName(providerName: string, capability: Capability): string {
+  const pascal = providerName.charAt(0).toUpperCase() + providerName.slice(1);
+  return `get${pascal}${capability === 'streaming' ? 'Streams' : capability === 'downloading' ? 'Downloads' : 'Subtitles'}`;
+}
+
+async function resolveProviderFn(provider: ScheduledProvider, capability: Capability): Promise<ProviderFn | null> {
+  const mod = await loadModule(provider.module);
+  if (!mod) return null;
+  const exportName = expectedExportName(provider.name, capability);
+  const fn = mod[exportName];
+  if (typeof fn !== 'function') {
+    providerLogger.error('manifest', `Provider "${provider.name}" is registered for ${capability} but "${provider.module}" does not export ${exportName} — skipped for this operation`);
+    return null;
+  }
+  return fn as ProviderFn;
+}
+
+/** Builds the per-provider configuration object passed as the second argument. */
+function providerConfig(name: ProviderId): unknown {
+  switch (name) {
+    case 'moviebox':
+      return { baseUrl: env.movieboxBase, secret: env.movieboxSecret, apiKey: env.movieboxSecret };
+    case 'daratech':
+      return { baseUrl: env.daratechBase, apiKey: env.daratechKey };
+    case 'castle':
+    case 'netmirror':
+    case 'vidlink':
+    case '4khdhub':
+    case 'dvdplay':
+    case 'streamflix':
+      return env.tmdbKey;
+    default:
+      return undefined;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Request coordination (contracts unchanged)
+// ─────────────────────────────────────────────────────────────────────────────
 
 function auth(request: any): boolean {
   return Boolean(env.internalsKey) && request.headers['x-internals-key'] === env.internalsKey;
@@ -100,112 +400,89 @@ function input(q: any): any {
   } as MovieProviderInput & { type: 'movie' };
 }
 
-function movieboxMovieAttempt(value: MovieProviderInput) {
-  return getMovieboxMovieStreams(value, {
-    baseUrl: env.movieboxBase,
-    secret: env.movieboxSecret,
-  });
+/** Mirrors the original per-request gating: which registered providers may run for this input. */
+function eligibleForStream(provider: ScheduledProvider, value: any): boolean {
+  if (value.type === 'anime') return Number.isFinite(value.anilist_id);
+  const hasTmdb = Number.isFinite(value.tmdb_id);
+  const hasMoviebox = typeof value.moviebox_id === 'string' && value.moviebox_id.length > 0;
+  if (!hasTmdb && !hasMoviebox) return false;
+  if (provider.name === 'moviebox') return hasMoviebox;
+  return hasTmdb;
 }
 
-function movieboxTvAttempt(value: TvProviderInput) {
-  return getMovieboxTvStreams(value, {
-    baseUrl: env.movieboxBase,
-    secret: env.movieboxSecret,
-  });
-}
-
-async function streamFor(value: any): Promise<{ streams: RawStream[]; subtitles: any[] }> {
+async function streamFor(value: any): Promise<{ streams: RawStream[]; subtitles: RawSubtitle[] }> {
   const streams: RawStream[] = [];
-  let subtitles: any[] = [];
+  let subtitles: RawSubtitle[] = [];
+  const category = value.type as MediaType;
+  const ordered = registry.getOrdered(category, 'streaming');
+  const attempted: string[] = [];
 
-  const attempts = (value.type === 'anime'
-    ? [
-        ['anikoto', getAnikotoStreams],
-        ['kaa', getKaaStreams],
-        ['animegg', getAnimeggStreams],
-        ['reanime', getReanimeStreams],
-        ['animedunya', getAnimedunyaStreams],
-        ['anineko', getAninekoStreams],
-        ['anidbapp', getAnidbappStreams],
-        ['anibd', getAnibdStreams],
-      ]
-    : value.type === 'tv'
-      ? Number.isFinite(value.tmdb_id)
-        ? [
-            ['castle', (x: TvProviderInput) => getTvCastle(x, env.tmdbKey)],
-            ...(value.moviebox_id ? [['moviebox', movieboxTvAttempt] as [ProviderId, (input: TvProviderInput) => Promise<RawStream[]>]] : []),
-            ['daratech', (x: TvProviderInput) => getTvDaratech(x, { baseUrl: env.daratechBase, apiKey: env.daratechKey })],
-            ['netmirror', (x: TvProviderInput) => getTvNetmirror(x, env.tmdbKey)],
-            ['vidlink', (x: TvProviderInput) => getTvVidlink(x, env.tmdbKey)],
-          ]
-        : value.moviebox_id
-          ? [['moviebox', movieboxTvAttempt]]
-          : []
-      : Number.isFinite(value.tmdb_id)
-        ? [
-            ['castle', (x: MovieProviderInput) => getMovieCastle(x, env.tmdbKey)],
-            ...(value.moviebox_id ? [['moviebox', movieboxMovieAttempt] as [ProviderId, (input: MovieProviderInput) => Promise<RawStream[]>]] : []),
-            ['daratech', (x: MovieProviderInput) => getMovieDaratech(x, { baseUrl: env.daratechBase, apiKey: env.daratechKey })],
-            ['netmirror', (x: MovieProviderInput) => getMovieNetmirror(x, env.tmdbKey)],
-            ['vidlink', (x: MovieProviderInput) => getMovieVidlink(x, env.tmdbKey)],
-          ]
-        : value.moviebox_id
-          ? [['moviebox', movieboxMovieAttempt]]
-          : []) as Array<[ProviderId, (input: any) => Promise<RawStream[]>]>;
-
-  for (const [id, fn] of attempts) {
-    if (!isHealthy(id, value.type)) {
-      providerLogger.debug(id, `Provider suppressed by health tracker category=${value.type}`);
+  for (const provider of ordered) {
+    if (!eligibleForStream(provider, value)) continue;
+    if (!isHealthy(provider.name, category as ProviderCategory)) {
+      providerLogger.debug(provider.name, `Provider suppressed by health tracker category=${category}`);
       continue;
     }
 
+    const fn = await resolveProviderFn(provider, 'streaming');
+    if (!fn) continue;
+
+    attempted.push(provider.name);
     try {
-      const result = await fn(value);
-      if (result.length) {
-        recordSuccess(id, value.type);
-        providerLogger.info(id, `Provider returned playable streams category=${value.type} count=${result.length}`);
+      const result = (await fn(value, providerConfig(provider.name))) as RawStream[];
+      if (Array.isArray(result) && result.length) {
+        recordSuccess(provider.name, category as ProviderCategory);
+        providerLogger.info(provider.name, `Provider returned playable streams category=${category} count=${result.length}`);
         streams.push(...result);
         subtitles = attachedSubtitles(result);
         break;
       }
-      recordFailure(id, value.type, 'no usable result');
-      providerLogger.warn(id, `Provider returned no usable streams category=${value.type}`);
+      recordFailure(provider.name, category as ProviderCategory, 'no usable result');
+      providerLogger.warn(provider.name, `Provider returned no usable streams category=${category}`);
     } catch (error) {
-      recordFailure(id, value.type, error);
-      providerLogger.error(id, `Provider stream request failed category=${value.type}: ${safeProviderError(error)}`);
+      recordFailure(provider.name, category as ProviderCategory, error);
+      providerLogger.error(provider.name, `Provider stream request failed category=${category}: ${safeProviderError(error)}`);
     }
   }
 
   if (!streams.length) {
-    providerLogger.error('fallback', `All stream providers exhausted category=${value.type} attempted=${attempts.map(([id]) => id).join(',')}`);
+    providerLogger.error('fallback', `All stream providers exhausted category=${value.type} attempted=${attempted.join(',') || '(none)'}`);
   }
 
   return { streams, subtitles };
 }
 
-async function downloadsFor(value: any): Promise<{ downloads: RawDownload[]; subtitles: any[] }> {
-  const providers: Array<[string, (input: any) => Promise<RawDownload[]>]> = [
-    ['moviebox', (x: any) => getMovieboxDownloads(x, { baseUrl: env.movieboxBase, apiKey: env.movieboxSecret })],
-    ['4khdhub', (x: any) => get4khdhubDownloads(x, env.tmdbKey)],
-    ['streamflix', (x: any) => getStreamflixDownloads(x, env.tmdbKey)],
-  ];
-  if (value.type === 'movie') providers.splice(2, 0, ['dvdplay', (x: any) => getDvdplayDownloads(x, env.tmdbKey)]);
+async function downloadsFor(value: any): Promise<{ downloads: RawDownload[]; subtitles: RawSubtitle[] }> {
+  const category = value.type as MediaType;
+  const ordered = registry.getOrdered(category, 'downloading');
+  const attempted: string[] = [];
 
-  for (const [id, fn] of providers) {
+  for (const provider of ordered) {
+    const fn = await resolveProviderFn(provider, 'downloading');
+    if (!fn) continue;
+
+    attempted.push(provider.name);
     try {
-      const result = await fn(value);
-      if (result.length) {
-        providerLogger.info(id, `Provider returned downloadable files category=${value.type} count=${result.length}`);
+      const result = (await fn(value, providerConfig(provider.name))) as RawDownload[];
+      if (Array.isArray(result) && result.length) {
+        providerLogger.info(provider.name, `Provider returned downloadable files category=${value.type} count=${result.length}`);
         return { downloads: result, subtitles: [] };
       }
-      providerLogger.warn(id, `Provider returned no downloadable files category=${value.type}`);
+      providerLogger.warn(provider.name, `Provider returned no downloadable files category=${value.type}`);
     } catch (error) {
-      providerLogger.error(id, `Provider download request failed category=${value.type}: ${safeProviderError(error)}`);
+      providerLogger.error(provider.name, `Provider download request failed category=${value.type}: ${safeProviderError(error)}`);
     }
   }
-  providerLogger.error('fallback', `All download providers exhausted category=${value.type}`);
+  providerLogger.error('fallback', `All download providers exhausted category=${value.type} attempted=${attempted.join(',') || '(none)'}`);
   return { downloads: [], subtitles: [] };
 }
+
+// Register resolution functions with health monitor after both are defined
+healthMonitor.setResolutionFunctions(streamFor, downloadsFor);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HTTP routes (request/response contracts unchanged)
+// ─────────────────────────────────────────────────────────────────────────────
 
 await app.register(cors, {
   origin: ['https://media.byspun.xyz', 'https://torii.byspun.xyz'],
@@ -245,63 +522,13 @@ app.addHook('onRequest', async (request, reply) => {
   }
 });
 
-app.get('/admin/diagnostics/:provider/:type', async (request, reply) => {
-  const params: any = request.params;
-  const query: any = request.query;
-  const provider = String(params.provider ?? '').toLowerCase();
-  const type = String(params.type ?? '').toLowerCase();
-  const title = String(query.title ?? '').trim();
-
-  if (provider !== 'daratech') {
-    return reply.code(404).send({
-      code: 'DIAGNOSTIC_PROVIDER_UNSUPPORTED',
-      error: 'Diagnostic provider unsupported',
-      description: 'This internal diagnostic route is only enabled for an explicitly allowlisted provider.',
-      action: 'Use an allowlisted provider name.',
-    });
-  }
-  if (type !== 'movie' && type !== 'tv') {
-    return reply.code(400).send({
-      code: 'DIAGNOSTIC_TYPE_UNSUPPORTED',
-      error: 'Diagnostic type unsupported',
-      description: 'Daratech diagnostics currently support movie and TV requests only.',
-      action: 'Use movie or tv as the type segment.',
-    });
-  }
-  if (!title) {
-    return reply.code(400).send({
-      code: 'MISSING_QUERY',
-      error: 'Title required',
-      description: 'A title is required to run the provider diagnostic.',
-      action: 'Pass the title in the query string, for example ?title=Fight%20Club.',
-    });
-  }
-
-  const diagnostic = await runDaratechDiagnostic(type, query, {
-    diagnosticSecret: env.diagnosticSecret,
-    daratechBase: env.daratechBase,
-    daratechKey: env.daratechKey,
-  });
-  return reply.send({
-    diagnostic: true,
-    generated_at: new Date().toISOString(),
-    ...diagnostic,
-  });
-});
-
 app.addHook('onResponse', async (request, reply) => {
   const requestPath = request.url.split('?')[0];
   providerLogger.info('request', `${request.method} ${requestPath} status=${reply.statusCode}`);
 });
 
 app.get('/health', async () => {
-  const records = getHealthRecords();
-  const degraded = records.some((record) => record.status === 'down');
-  return {
-    status: degraded ? 'degraded' : 'ok',
-    capabilities: { streaming: true, downloads: true, anime: true },
-    content_resolution: { status: degraded ? 'degraded' : 'healthy', checked_at: new Date().toISOString() },
-  };
+  return healthMonitor.getHealthSummary();
 });
 
 app.get('/stream', async (request, reply) => {
@@ -369,11 +596,16 @@ app.setErrorHandler((_error, _request, reply) => reply.code(500).send({
 
 startProviderLogArchiver();
 
+// Start health monitor scheduler
+healthMonitor.startScheduler();
+
 process.on('SIGTERM', async () => {
+  healthMonitor.stopScheduler();
   await flushProviderLogs();
   process.exit(0);
 });
 process.on('SIGINT', async () => {
+  healthMonitor.stopScheduler();
   await flushProviderLogs();
   process.exit(0);
 });

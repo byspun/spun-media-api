@@ -1,5 +1,5 @@
-import { attachSubtitles } from '../normalizer.js';
-import type { MovieProviderInput, RawStream, RawSubtitle } from '../shared/types.js';
+import { attachSubtitles } from './internal/normalizer.js';
+import type { RawStream, RawSubtitle, TvProviderInput } from './internal/types.js';
 
 interface MovieboxApiConfig {
   baseUrl: string;
@@ -53,9 +53,13 @@ function subtitle(value: { url?: string; language?: string; language_code?: stri
 async function request(
   config: MovieboxApiConfig,
   subjectId: string,
+  season: number,
+  episode: number,
 ): Promise<MovieboxStreamItem[]> {
   if (!config.baseUrl || !config.secret || !/^\d+$/.test(subjectId)) return [];
   const url = new URL(`/stream/${encodeURIComponent(subjectId)}`, config.baseUrl.replace(/\/$/, ''));
+  url.searchParams.set('se', String(season));
+  url.searchParams.set('ep', String(episode));
   const response = await fetch(url, {
     headers: { Accept: 'application/json', 'X-Worker-Secret': config.secret },
     signal: AbortSignal.timeout(20_000),
@@ -87,9 +91,9 @@ function mapStreams(items: MovieboxStreamItem[]): RawStream[] {
 }
 
 export async function getMovieboxStreams(
-  input: MovieProviderInput,
+  input: TvProviderInput,
   config: MovieboxApiConfig,
 ): Promise<RawStream[]> {
   if (!input.moviebox_id) return [];
-  return mapStreams(await request(config, input.moviebox_id));
+  return mapStreams(await request(config, input.moviebox_id, input.season, input.episode));
 }

@@ -1,6 +1,6 @@
-import { attachSubtitles } from '../normalizer.js';
+import { attachSubtitles } from './internal/normalizer.js';
 import { buildTitles, decodeEntities, dedupeStreams, fetchJson, fetchText, getAniListMedia, safeStream, attr, stripTags } from './anivexa-utils.js';
-import type { AnimeProviderInput, RawStream } from '../shared/types.js';
+import type { AnimeProviderInput, RawStream } from './internal/types.js';
 
 const BASE = 'https://anidb.app';
 const XHR = { 'X-Requested-With': 'XMLHttpRequest', Accept: 'application/json,text/html,*/*;q=0.8' };

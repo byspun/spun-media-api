@@ -1,5 +1,5 @@
-import { detectFormat, isSafeHttpUrl, normalizeTitle, normalizeQuality, uniqueBy } from '../mapper.js';
-import type { AnimeProviderInput, RawSubtitle, RawStream } from '../shared/types.js';
+import { detectFormat, isSafeHttpUrl, normalizeTitle, normalizeQuality, uniqueBy } from './internal/utils.js';
+import type { AnimeProviderInput, RawSubtitle, RawStream } from './internal/types.js';
 
 export const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 export const ANILIST_URL = 'https://graphql.anilist.co';

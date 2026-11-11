@@ -1,6 +1,6 @@
-import { attachSubtitles } from '../normalizer.js';
+import { attachSubtitles } from './internal/normalizer.js';
 import { bestTitleScore, dedupeStreams, fetchJson, getAniListMedia, safeStream, buildTitles, diceCoeff } from './anivexa-utils.js';
-import type { AnimeProviderInput, RawStream } from '../shared/types.js';
+import type { AnimeProviderInput, RawStream } from './internal/types.js';
 
 const BASE = 'https://kaa.lt';
 const HLS_BASE = 'https://hls.krussdomi.com/manifest';

@@ -1,6 +1,6 @@
-import { attachSubtitles } from '../normalizer.js';
+import { attachSubtitles } from './internal/normalizer.js';
 import { dedupeStreams, fetchJson, fetchText, safeStream, animeAudio } from './anivexa-utils.js';
-import type { AnimeProviderInput, RawStream } from '../shared/types.js';
+import type { AnimeProviderInput, RawStream } from './internal/types.js';
 
 const BASE = 'https://epeng.animeapps.top';
 

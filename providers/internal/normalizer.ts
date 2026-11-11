@@ -1,19 +1,8 @@
-import { uniqueBy, isSafeHttpUrl, normalizeQuality, universalSlugify } from './mapper.js';
+import { uniqueBy, isSafeHttpUrl, normalizeQuality, universalSlugify } from './utils.js';
+import type { ProviderCategory, PublicDownloadGroup, PublicDownloadItem, PublicDownloadResponse, PublicStreamItem, PublicStreamResponse, PublicSubtitle, RawDownload, RawStream, RawSubtitle } from './types.js';
+
 const SUBTITLE_META = Symbol('provider-subtitles');
 type WithSubtitleMeta = { [SUBTITLE_META]?: RawSubtitle[] };
-
-import type {
-  ProviderCategory,
-  PublicDownloadGroup,
-  PublicDownloadItem,
-  PublicDownloadResponse,
-  PublicStreamResponse,
-  PublicStreamItem,
-  PublicSubtitle,
-  RawDownload,
-  RawStream,
-  RawSubtitle,
-} from './shared/types.js';
 
 export function attachSubtitles<T extends RawStream[] | RawDownload[]>(values: T, subtitles: RawSubtitle[]): T {
   Object.defineProperty(values, SUBTITLE_META, { value: subtitles, enumerable: false, configurable: true });

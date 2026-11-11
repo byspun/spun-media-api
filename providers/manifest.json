@@ -1,0 +1,208 @@
+// ====================================================================================================
+// PROVIDER MANIFEST
+// ====================================================================================================
+//
+// What this does:
+//   This is the single source of truth for which providers are available, what media types they
+//   support, what capabilities they expose (streaming / downloading / subtitles), which external ID
+//   systems they can use for lookup, and the order in which they are tried. The provider registry at
+//   startup reads this file and builds the provider dispatch table from it. A provider module that
+//   exists on disk but is not registered here is NEVER loaded or called.
+//
+// Fields (one entry per provider):
+//   name           Provider identifier. Must match the exported function name in the module:
+//                  <name>Streams (streaming) or <name>Downloads (downloading).
+//   module         Path to the provider module relative to this manifest (e.g. "./castle.ts").
+//   enabled        true to make the provider available; false to register it without using it.
+//                  Disabled providers are ignored during priority conflict detection.
+//   type           Media types this provider serves: "movies", "series", "anime".
+//   capabilities   Operations this provider can perform: "streaming" and/or "downloading".
+//                  (A future "subtitle" capability would enable standalone subtitle fetching.)
+//   supportedIds   ID systems this provider can actually use for lookup or matching:
+//                  "tmdb", "imdb", "anilist", "mal", "moviebox". Providers that rely purely on
+//                  title/fuzzy search get an empty array [].
+//                  NOTE: this field is descriptive configuration for registration and selection.
+//                  It does NOT perform ID translation — the metadata layer still owns spun_id and
+//                  external-ID associations.
+//   priority_stream      (optional) Fallback priority for streaming. Lower number = tried first.
+//   priority_download    (optional) Fallback priority for downloading. Lower number = tried first.
+//
+// Valid media types: "movies", "series", "anime"
+//
+// Valid capabilities: "streaming", "downloading"
+//
+// Valid ID systems: "tmdb", "imdb", "anilist", "mal", "moviebox"
+//
+// How priorities work:
+//   For a given media type + capability combination (e.g. movies/streaming), providers are sorted
+//   by their priority_* value ascending. The first provider returning at least one result wins;
+//   empty results cause fallback to the next provider.
+//
+// Priority conflicts:
+//   Two enabled providers may NOT share the same priority for the same media type + capability.
+//   On startup the registry detects this, logs a clear warning naming the providers, the media
+//   type, the capability and the colliding priority, and SKIPS ALL providers involved in that
+//   specific conflict for that operation only. It does not disable the provider for other
+//   capabilities/media types. Conflicts are never silently resolved by alphabetical order or
+//   manifest position. A provider missing a required priority for a declared capability is
+//   skipped for that operation with a warning and does not crash the layer.
+//
+// Registering a new provider:
+//   1. Implement the provider as a module at the path given by "module" in this manifest.
+//      - Streaming providers must export "get<Name>Streams" (e.g. getCastleStreams).
+//      - Downloading providers must export "get<Name>Downloads" (e.g. getMovieboxDownloads).
+//      The registry dynamically imports the module and resolves these exports by name.
+//   2. Add one entry to this manifest with the correct name/module/capabilities/types/priorities.
+//   3. No other orchestration code needs to change.
+//
+// ====================================================================================================
+
+{
+  "providers": [
+    {
+      "name": "anikoto",
+      "module": "./anikoto.ts",
+      "enabled": true,
+      "type": ["anime"],
+      "capabilities": ["streaming"],
+      "supportedIds": ["anilist"],
+      "priority_stream": 1
+    },
+    {
+      "name": "kaa",
+      "module": "./kaa.ts",
+      "enabled": true,
+      "type": ["anime"],
+      "capabilities": ["streaming"],
+      "supportedIds": ["anilist"],
+      "priority_stream": 2
+    },
+    {
+      "name": "animegg",
+      "module": "./animegg.ts",
+      "enabled": true,
+      "type": ["anime"],
+      "capabilities": ["streaming"],
+      "supportedIds": ["anilist"],
+      "priority_stream": 3
+    },
+    {
+      "name": "reanime",
+      "module": "./reanime.ts",
+      "enabled": true,
+      "type": ["anime"],
+      "capabilities": ["streaming"],
+      "supportedIds": ["anilist"],
+      "priority_stream": 4
+    },
+    {
+      "name": "animedunya",
+      "module": "./animedunya.ts",
+      "enabled": true,
+      "type": ["anime"],
+      "capabilities": ["streaming"],
+      "supportedIds": ["anilist"],
+      "priority_stream": 5
+    },
+    {
+      "name": "anineko",
+      "module": "./anineko.ts",
+      "enabled": true,
+      "type": ["anime"],
+      "capabilities": ["streaming"],
+      "supportedIds": ["anilist"],
+      "priority_stream": 6
+    },
+    {
+      "name": "anidbapp",
+      "module": "./anidbapp.ts",
+      "enabled": true,
+      "type": ["anime"],
+      "capabilities": ["streaming"],
+      "supportedIds": ["anilist", "mal"],
+      "priority_stream": 7
+    },
+    {
+      "name": "anibd",
+      "module": "./anibd.ts",
+      "enabled": true,
+      "type": ["anime"],
+      "capabilities": ["streaming"],
+      "supportedIds": ["anilist"],
+      "priority_stream": 8
+    },
+    {
+      "name": "castle",
+      "module": "./castle.ts",
+      "enabled": true,
+      "type": ["movies", "series"],
+      "capabilities": ["streaming"],
+      "supportedIds": ["tmdb"],
+      "priority_stream": 1
+    },
+    {
+      "name": "moviebox",
+      "module": "./moviebox.ts",
+      "enabled": true,
+      "type": ["movies", "series"],
+      "capabilities": ["streaming", "downloading"],
+      "supportedIds": ["moviebox"],
+      "priority_stream": 2,
+      "priority_download": 1
+    },
+    {
+      "name": "daratech",
+      "module": "./daratech.ts",
+      "enabled": true,
+      "type": ["movies", "series"],
+      "capabilities": ["streaming"],
+      "supportedIds": [],
+      "priority_stream": 3
+    },
+    {
+      "name": "netmirror",
+      "module": "./netmirror.ts",
+      "enabled": true,
+      "type": ["movies", "series"],
+      "capabilities": ["streaming"],
+      "supportedIds": ["tmdb"],
+      "priority_stream": 4
+    },
+    {
+      "name": "vidlink",
+      "module": "./vidlink.ts",
+      "enabled": true,
+      "type": ["movies", "series"],
+      "capabilities": ["streaming"],
+      "supportedIds": ["tmdb"],
+      "priority_stream": 5
+    },
+    {
+      "name": "4khdhub",
+      "module": "./4khdhub.ts",
+      "enabled": true,
+      "type": ["movies", "series"],
+      "capabilities": ["downloading"],
+      "supportedIds": ["tmdb"],
+      "priority_download": 2
+    },
+    {
+      "name": "dvdplay",
+      "module": "./dvdplay.ts",
+      "enabled": true,
+      "type": ["movies"],
+      "capabilities": ["downloading"],
+      "supportedIds": ["tmdb"],
+      "priority_download": 3
+    },
+    {
+      "name": "streamflix",
+      "module": "./streamflix.ts",
+      "enabled": true,
+      "type": ["movies", "series"],
+      "capabilities": ["downloading"],
+      "supportedIds": ["tmdb"],
+      "priority_download": 4
+    }
+  ]
+}

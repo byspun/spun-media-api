@@ -1,7 +1,7 @@
-import { fetchJson, findBestMatch } from '../shared/http.js';
-import { isSafeHttpUrl, normalizeQuality } from '../mapper.js';
-import { attachSubtitles } from '../normalizer.js';
-import type { RawStream, RawSubtitle, TvProviderInput } from '../shared/types.js';
+import { fetchJson, findBestMatch } from './internal/http.js';
+import { isSafeHttpUrl, normalizeQuality } from './internal/utils.js';
+import { attachSubtitles } from './internal/normalizer.js';
+import type { RawStream, RawSubtitle, TvProviderInput } from './internal/types.js';
 
 interface DaratechConfig { baseUrl: string; apiKey: string }
 function subtitle(value: any): RawSubtitle | null { if (!isSafeHttpUrl(value?.url)) return null; const language = String(value.lang ?? value.language ?? 'Unknown'); return { url: value.url, language, language_code: language.toLowerCase().slice(0, 2), format: 'srt', provider: 'daratech-subtitles' }; }

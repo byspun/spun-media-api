@@ -1,4 +1,3 @@
-// providers/shared/http.ts
 // Shared HTTP helpers for all providers.
 // Wraps fetch with: configurable retries, exponential backoff, timeout.
 // Ported and extended from D.Verse retry.ts.
@@ -71,7 +70,7 @@ export async function fetchJson<T>(
   options: FetchOptions = {}
 ): Promise<T | null> {
   try {
-    const res = await fetchWithRetry(url, {
+    const res = await fetchWithTimeout(url, {
       headers: { Accept: 'application/json', ...(options.headers ?? {}) },
       ...options,
     });

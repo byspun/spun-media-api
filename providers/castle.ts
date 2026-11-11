@@ -1,7 +1,7 @@
 import CryptoJS from 'crypto-js';
-import { detectFormat, isSafeHttpUrl, normalizeQuality, uniqueBy } from '../mapper.js';
-import { attachSubtitles } from '../normalizer.js';
-import type { RawStream, RawSubtitle, TvProviderInput } from '../shared/types.js';
+import { detectFormat, isSafeHttpUrl, normalizeQuality, uniqueBy } from './internal/utils.js';
+import { attachSubtitles } from './internal/normalizer.js';
+import type { RawStream, RawSubtitle, TvProviderInput } from './internal/types.js';
 
 const BASE = 'https://api.hlowb.com';
 const PKG = 'com.external.castle';

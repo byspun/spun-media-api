@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { createLogger, type LogLevel } from '../core/logs/logger.js';
+import { createLogger, type LogLevel } from '../../core/logs/logger.js';
 
 const service = 'providers' as const;
 const logsDir = path.resolve(process.cwd(), '../core/logs/providers');

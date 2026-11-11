@@ -1,6 +1,6 @@
-import { fetchJson } from '../shared/http.js';
-import { detectFormat, isSafeHttpUrl, normalizeQuality } from '../mapper.js';
-import type { RawStream, TvProviderInput } from '../shared/types.js';
+import { fetchJson } from './internal/http.js';
+import { detectFormat, isSafeHttpUrl, normalizeQuality } from './internal/utils.js';
+import type { RawStream, TvProviderInput } from './internal/types.js';
 
 export async function getNetmirrorStreams(input: TvProviderInput, tmdbApiKey: string): Promise<RawStream[]> {
   const tmdb = await fetchJson<any>(`https://api.themoviedb.org/3/tv/${input.tmdb_id}?api_key=${encodeURIComponent(tmdbApiKey)}`, { timeout: 15_000 }); const title = encodeURIComponent(String(tmdb?.name ?? input.title));

@@ -1,6 +1,13 @@
-import type { StreamFormat, StreamQuality } from './shared/types.js';
-
-export type MediaType = 'movie' | 'tv' | 'anime';
+// Shared normalization and utility functions.
+// Previously located at providers/mapper.ts — that name was misleading,
+// as this module does NOT perform any ID mapping. It holds:
+//   - title normalization / slugification
+//   - year-from-date detection
+//   - stream quality normalization
+//   - format detection from URLs
+//   - safe-URL validation
+//   - generic deduplication
+//   - unique-by selection
 
 export function normalizeTitle(value: unknown): string {
   return String(value ?? '')
@@ -64,3 +71,6 @@ export function isSafeHttpUrl(value: unknown): value is string {
     return false;
   }
 }
+
+export type StreamFormat = 'mp4' | 'hls' | 'dash' | 'mkv';
+export type StreamQuality = '4k' | '1080p' | '720p' | '480p' | '360p' | 'auto';
