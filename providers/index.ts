@@ -20,13 +20,30 @@ const env = {
   adminKey: process.env.ADMIN_KEY ?? '',
 };
 
-providerLogger.info('startup', 'Streaming configuration loaded', {
-  tmdbConfigured: Boolean(env.tmdbKey),
-  movieboxSecretConfigured: Boolean(env.movieboxSecret),
-  internalsKeyConfigured: Boolean(env.internalsKey),
-  daratechConfigured: Boolean(env.daratechKey),
-  adminKeyConfigured: Boolean(env.adminKey),
-});
+// ─── Config display (plain output, no timestamps/levels) ──────────────────────────
+const configChecks = [
+  { label: 'TMDB Key', value: env.tmdbKey, required: true },
+  { label: 'Internals Key', value: env.internalsKey, required: true },
+  { label: 'Admin Key', value: env.adminKey, required: true },
+  { label: 'Moviebox Secret', value: env.movieboxSecret, required: false },
+  { label: 'Daratech Key', value: env.daratechKey, required: false },
+];
+
+let hasMissingRequired = false;
+for (const { label, value, required } of configChecks) {
+  const status = value ? '✓' : 'x';
+  const suffix = required ? ' (required)' : value ? '' : ' (optional)';
+  console.log(`${status} ${label}${suffix}`);
+  if (!value && required) hasMissingRequired = true;
+}
+
+if (hasMissingRequired) {
+  const missing = configChecks.filter(c => c.required && !c.value).map(c => c.label).join(', ');
+  console.log(`\nMissing required configuration: ${missing} — service will not start`);
+  process.exit(1);
+}
+
+console.log('\nLogs:');
 
 function safeProviderError(error: unknown): string {
   return String(error instanceof Error ? error.message : error ?? 'unknown failure')
@@ -62,6 +79,12 @@ interface ManifestProviderEntry {
   priority_stream?: unknown;
   priority_download?: unknown;
   priority_subtitles?: unknown;
+}
+
+/** Interface for testing a single provider without fallback (used by the health monitor). */
+export interface ProviderTester {
+  testStream: (name: ProviderId, fixture: { type: 'movie' | 'tv' | 'anime'; anilist_id?: number; tmdb_id?: number; title: string; episode?: number }) => Promise<{ streams: RawStream[]; subtitles: RawSubtitle[] }>;
+  testDownload: (name: ProviderId, fixture: { type: 'movie' | 'tv' | 'anime'; tmdb_id?: number; title: string; season?: number; episode?: number }) => Promise<{ downloads: RawDownload[]; subtitles: RawSubtitle[] }>;
 }
 
 interface ScheduledProvider {
@@ -353,6 +376,67 @@ function providerConfig(name: ProviderId): unknown {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Provider tester (used by the health monitor)
+//
+// Tests a single provider in isolation, WITHOUT the fallback chain, so each
+// provider's health is measured independently.
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface MovieFixture { type: 'movie'; tmdb_id?: number; title: string; year?: number }
+interface TvFixture { type: 'tv'; tmdb_id?: number; title: string; season?: number; episode?: number }
+interface AnimeFixture { type: 'anime'; anilist_id?: number; title: string; episode?: number; dub?: boolean }
+
+function eligibleForTest(provider: ScheduledProvider, fixture: MovieFixture | TvFixture | AnimeFixture): boolean {
+  if (fixture.type === 'anime') return fixture.anilist_id !== undefined;
+  const hasTmdb = fixture.tmdb_id !== undefined;
+  if (!hasTmdb) return false;
+  return true;
+}
+
+export const providerTester: ProviderTester = {
+  async testStream(name: ProviderId, fixture: AnimeFixture | MovieFixture | TvFixture): Promise<{ streams: RawStream[]; subtitles: RawSubtitle[] }> {
+    const category = fixture.type as MediaType;
+    const ordered = registry.getOrdered(category, 'streaming');
+    const provider = ordered.find(p => p.name === name);
+    if (!provider) return { streams: [], subtitles: [] };
+    if (!eligibleForTest(provider, fixture)) return { streams: [], subtitles: [] };
+
+    const fn = await resolveProviderFn(provider, 'streaming');
+    if (!fn) return { streams: [], subtitles: [] };
+
+    try {
+      const result = (await fn(fixture, providerConfig(name))) as RawStream[];
+      if (Array.isArray(result) && result.length) {
+        return { streams: result, subtitles: attachedSubtitles(result) };
+      }
+      return { streams: [], subtitles: [] };
+    } catch {
+      return { streams: [], subtitles: [] };
+    }
+  },
+
+  async testDownload(name: ProviderId, fixture: MovieFixture | TvFixture): Promise<{ downloads: RawDownload[]; subtitles: RawSubtitle[] }> {
+    const category = fixture.type as MediaType;
+    const ordered = registry.getOrdered(category, 'downloading');
+    const provider = ordered.find(p => p.name === name);
+    if (!provider) return { downloads: [], subtitles: [] };
+
+    const fn = await resolveProviderFn(provider, 'downloading');
+    if (!fn) return { downloads: [], subtitles: [] };
+
+    try {
+      const result = (await fn(fixture, providerConfig(name))) as RawDownload[];
+      if (Array.isArray(result) && result.length) {
+        return { downloads: result, subtitles: [] };
+      }
+      return { downloads: [], subtitles: [] };
+    } catch {
+      return { downloads: [], subtitles: [] };
+    }
+  },
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Request coordination (contracts unchanged)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -477,9 +561,6 @@ async function downloadsFor(value: any): Promise<{ downloads: RawDownload[]; sub
   return { downloads: [], subtitles: [] };
 }
 
-// Register resolution functions with health monitor after both are defined
-healthMonitor.setResolutionFunctions(streamFor, downloadsFor);
-
 // ─────────────────────────────────────────────────────────────────────────────
 // HTTP routes (request/response contracts unchanged)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -596,7 +677,10 @@ app.setErrorHandler((_error, _request, reply) => reply.code(500).send({
 
 startProviderLogArchiver();
 
-// Start health monitor scheduler
+// Register resolution functions with health monitor after both are defined
+healthMonitor.setResolutionFunctions(streamFor, downloadsFor, { testStream: providerTester.testStream.bind(providerTester), testDownload: providerTester.testDownload.bind(providerTester) });
+
+// Start health monitor scheduler (now with test functions available)
 healthMonitor.startScheduler();
 
 process.on('SIGTERM', async () => {

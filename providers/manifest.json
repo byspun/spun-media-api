@@ -21,6 +21,9 @@
 //   supportedIds   ID systems this provider can actually use for lookup or matching:
 //                  "tmdb", "imdb", "anilist", "mal", "moviebox". Providers that rely purely on
 //                  title/fuzzy search get an empty array [].
+//                  Providers supporting multiple ID systems (e.g. both "anilist" and "mal")
+//                  can list them all — the health checker and metadata layer will pass
+//                  all available IDs and the provider chooses which to use.
 //                  NOTE: this field is descriptive configuration for registration and selection.
 //                  It does NOT perform ID translation — the metadata layer still owns spun_id and
 //                  external-ID associations.
@@ -101,7 +104,7 @@
       "enabled": true,
       "type": ["anime"],
       "capabilities": ["streaming"],
-      "supportedIds": ["anilist"],
+      "supportedIds": ["mal"],
       "priority_stream": 5
     },
     {

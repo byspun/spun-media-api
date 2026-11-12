@@ -113,6 +113,7 @@ const ANIME_FIXTURE = {
   title: 'Attack on Titan',
   year: 2013,
   anilist_id: 16498,
+  mal_id: 16498,
   episode: 1,
   dub: false,
 };
@@ -175,8 +176,11 @@ export class HealthMonitor {
   private isRunning = false;
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
   private manifestEntries: ManifestProviderEntry[] = [];
+  private lastHealthCheckAt: Date | null = null;
   private streamForFn: ((value: any) => Promise<{ streams: any[]; subtitles: any[] }>) | null = null;
   private downloadsForFn: ((value: any) => Promise<{ downloads: any[]; subtitles: any[] }>) | null = null;
+  private testStreamFn: ((name: string, fixture: any) => Promise<{ streams: any[]; subtitles: any[] }>) | null = null;
+  private testDownloadsFn: ((name: string, fixture: any) => Promise<{ downloads: any[]; subtitles: any[] }>) | null = null;
 
   constructor() {
     this.loadManifest();
@@ -185,16 +189,16 @@ export class HealthMonitor {
   private loadManifest(): void {
     try {
       // Resolve manifest relative to the providers root directory
-      // In dev: providers/internal/health.ts -> ../../manifest.json
-      // In dist: dist/providers/internal/health.js -> ../../manifest.json
-      const manifestPath = fileURLToPath(new URL('../../manifest.json', import.meta.url));
+      // In dev: providers/internal/health.ts -> ../manifest.json
+      // In dist: dist/providers/internal/health.js -> ../manifest.json
+      const manifestPath = fileURLToPath(new URL('../manifest.json', import.meta.url));
       const raw = fs.readFileSync(manifestPath, 'utf8');
       // Strip JSONC comments
       const stripped = raw.replace(/\/\/.*$/gm, '');
       const parsed = JSON.parse(stripped) as { providers?: ManifestProviderEntry[] };
       this.manifestEntries = Array.isArray(parsed.providers) ? parsed.providers : [];
     } catch (error) {
-      providerLogger.error('health-monitor', `Failed to load manifest: ${String(error)}`);
+      providerLogger.error('health', `Failed to load manifest: ${String(error)}`);
       this.manifestEntries = [];
     }
   }
@@ -202,10 +206,15 @@ export class HealthMonitor {
   /** Set the resolution functions after they're defined in index.ts */
   setResolutionFunctions(
     streamFor: (value: any) => Promise<{ streams: any[]; subtitles: any[] }>,
-    downloadsFor: (value: any) => Promise<{ downloads: any[]; subtitles: any[] }>
+    downloadsFor: (value: any) => Promise<{ downloads: any[]; subtitles: any[] }>,
+    tester?: { testStream: (name: string, fixture: any) => Promise<{ streams: any[]; subtitles: any[] }>; testDownload: (name: string, fixture: any) => Promise<{ downloads: any[]; subtitles: any[] }> }
   ): void {
     this.streamForFn = streamFor;
     this.downloadsForFn = downloadsFor;
+    if (tester) {
+      this.testStreamFn = tester.testStream;
+      this.testDownloadsFn = tester.testDownload;
+    }
   }
 
   /** Get all enabled providers that should be health-checked */
@@ -219,22 +228,22 @@ export class HealthMonitor {
       const fixture = selectFixture(entry);
 
       if (!fixture) {
-        providerLogger.warn('health-monitor', `No suitable fixture for provider "${entry.name}"`);
+        providerLogger.warn('health', `No suitable fixture for provider "${entry.name}"`);
         continue;
       }
 
       const valid = isValidFixtureForProvider(fixture, entry);
-      providerLogger.debug('health-monitor', `Provider "${entry.name}": capability=${capability}, fixture=${fixture.type}, valid=${valid}, supportedIds=${JSON.stringify(entry.supportedIds)}`);
+      providerLogger.debug('health', `Provider "${entry.name}": capability=${capability}, fixture=${fixture.type}, valid=${valid}, supportedIds=${JSON.stringify(entry.supportedIds)}`);
 
       if (!valid) {
-        providerLogger.warn('health-monitor', `Fixture not compatible with provider "${entry.name}"`);
+        providerLogger.warn('health', `Fixture not compatible with provider "${entry.name}"`);
         continue;
       }
 
       jobs.push({ provider: entry.name, capability, fixture });
     }
 
-    providerLogger.info('health-monitor', `Health check targets: ${jobs.map(j => j.provider).join(', ')}`);
+    providerLogger.info('health', `Health check targets: ${jobs.map(j => j.provider).join(', ')}`);
     return jobs;
   }
 
@@ -247,8 +256,8 @@ export class HealthMonitor {
       let result: { streams?: any[]; downloads?: any[]; subtitles?: any[] } = {};
 
       if (capability === 'streaming') {
-        if (!this.streamForFn) throw new Error('Stream resolution function not registered');
-        result = await this.streamForFn(fixture);
+        if (!this.testStreamFn) throw new Error('Stream test function not registered');
+        result = await this.testStreamFn(provider, fixture);
         // Check if we got valid streams with URLs
         const streams = result.streams ?? [];
         const validStream = streams.find(s => s && typeof s.url === 'string' && s.url.startsWith('http'));
@@ -270,8 +279,8 @@ export class HealthMonitor {
           error: 'No valid stream URL returned',
         };
       } else {
-        if (!this.downloadsForFn) throw new Error('Download resolution function not registered');
-        result = await this.downloadsForFn(fixture);
+        if (!this.testDownloadsFn) throw new Error('Download test function not registered');
+        result = await this.testDownloadsFn(provider, fixture);
         const downloads = result.downloads ?? [];
         const validDownload = downloads.find(d => d && typeof d.url === 'string' && d.url.startsWith('http'));
 
@@ -316,14 +325,16 @@ export class HealthMonitor {
   /** Run all health checks */
   async runHealthChecks(): Promise<void> {
     if (this.isRunning) {
-      providerLogger.debug('health-monitor', 'Health check already running, skipping');
+      providerLogger.debug('health', 'Health check already running, skipping');
       return;
     }
 
     this.isRunning = true;
     const jobs = this.getHealthCheckTargets();
 
-    providerLogger.info('health-monitor', `Starting health checks for ${jobs.length} providers`);
+    providerLogger.info('health', `Starting health checks for ${jobs.length} providers`);
+
+    const results = new Map<string, ProviderHealthResult>();
 
     // Run checks with individual timeouts and error isolation
     const checkPromises = jobs.map(async (job) => {
@@ -335,8 +346,11 @@ export class HealthMonitor {
             setTimeout(() => reject(new Error('Health check timeout')), timeoutMs)
           ),
         ]);
-        this.results.set(job.provider, result);
-        providerLogger.info('health-monitor', `${job.provider}: ${result.status} (${result.responseTimeMs}ms)${result.error ? ` - ${result.error}` : ''}`);
+        results.set(job.provider, result);
+        // Only log non-healthy providers individually (warn)
+        if (result.status !== 'healthy') {
+          providerLogger.warn('health', `${job.provider}: ${result.status} (${result.responseTimeMs}ms)${result.error ? ` - ${result.error}` : ''}`);
+        }
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
         const result: ProviderHealthResult = {
@@ -346,14 +360,30 @@ export class HealthMonitor {
           checkedAt: new Date().toISOString(),
           error: errorMsg.slice(0, 200),
         };
-        this.results.set(job.provider, result);
-        providerLogger.warn('health-monitor', `${job.provider}: ${result.status} - ${result.error}`);
+        results.set(job.provider, result);
+        providerLogger.warn('health', `${job.provider}: ${result.status} - ${result.error}`);
       }
     });
 
     await Promise.all(checkPromises);
     this.isRunning = false;
-    providerLogger.info('health-monitor', 'Health checks completed');
+    this.lastHealthCheckAt = new Date();
+    // Store results in instance map for endpoint
+    for (const [name, result] of results.entries()) {
+      this.results.set(name, result);
+    }
+
+    // Summary line
+    let healthy = 0, degraded = 0, down = 0, unknown = 0;
+    for (const result of results.values()) {
+      switch (result.status) {
+        case 'healthy': healthy++; break;
+        case 'degraded': degraded++; break;
+        case 'down': down++; break;
+        default: unknown++;
+      }
+    }
+    providerLogger.info('health', `${healthy} healthy, ${down} down, ${degraded} degraded, ${unknown} unknown`);
   }
 
   /** Get current health results for the endpoint */
@@ -370,18 +400,40 @@ export class HealthMonitor {
     const providers: Record<string, { status: ProviderHealthStatus; response_time: string | null }> = {};
     let healthy = 0, degraded = 0, down = 0, unknown = 0;
 
+    // First pass: include results from health checks
     for (const name of enabledProviders) {
       const result = this.results.get(name);
-      if (!result || result.status === 'unknown') {
+      if (!result) {
+        // Provider never checked yet
         providers[name] = { status: 'unknown', response_time: null };
         unknown++;
-      } else {
-        const responseTime = result.responseTimeMs !== null ? `${result.responseTimeMs}ms` : null;
-        providers[name] = { status: result.status, response_time: responseTime };
-        switch (result.status) {
-          case 'healthy': healthy++; break;
-          case 'degraded': degraded++; break;
-          case 'down': down++; break;
+        continue;
+      }
+
+      const responseTime = result.responseTimeMs !== null ? `${result.responseTimeMs}ms` : null;
+      providers[name] = { status: result.status, response_time: responseTime };
+      switch (result.status) {
+        case 'healthy': healthy++; break;
+        case 'degraded': degraded++; break;
+        case 'down': down++; break;
+      }
+    }
+
+    // Second pass: if health checks are recent and some providers are still unknown,
+    // classify them based on last health check status as fallback
+    if (this.lastHealthCheckAt && (Date.now() - this.lastHealthCheckAt.getTime() < 300000)) {
+      for (const name of enabledProviders) {
+        if (!providers[name]) continue; // Already counted
+
+        // If provider shows unknown but was checked in last 5 minutes, it means
+        // the health check didn't cover this provider's media types/capabilities
+        // Re-check manifest compatibility and resurrect status if it was previously checked
+        const result = this.results.get(name);
+        if (result && !providers[name].response_time) {
+          providers[name].status = result.status;
+          if (result.status === 'healthy') healthy++;
+          else if (result.status === 'degraded') degraded++;
+          else if (result.status === 'down') down++;
         }
       }
     }
@@ -409,21 +461,21 @@ export class HealthMonitor {
   startScheduler(): void {
     // Run initial check immediately
     this.runHealthChecks().catch(err =>
-      providerLogger.error('health-monitor', `Initial health check failed: ${String(err)}`)
+      providerLogger.error('health', `Initial health check failed: ${String(err)}`)
     );
 
     // Schedule every 3 hours
     const THREE_HOURS = 3 * 60 * 60 * 1000;
     this.intervalHandle = setInterval(() => {
       this.runHealthChecks().catch(err =>
-        providerLogger.error('health-monitor', `Scheduled health check failed: ${String(err)}`)
+        providerLogger.error('health', `Scheduled health check failed: ${String(err)}`)
       );
     }, THREE_HOURS);
 
     // Prevent interval from keeping process alive
     this.intervalHandle.unref?.();
 
-    providerLogger.info('health-monitor', 'Health check scheduler started (every 3 hours)');
+    providerLogger.info('health', 'Health check scheduler started (every 3 hours)');
   }
 
   /** Stop background scheduler */
@@ -431,7 +483,7 @@ export class HealthMonitor {
     if (this.intervalHandle) {
       clearInterval(this.intervalHandle);
       this.intervalHandle = null;
-      providerLogger.info('health-monitor', 'Health check scheduler stopped');
+      providerLogger.info('health', 'Health check scheduler stopped');
     }
   }
 }

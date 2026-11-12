@@ -66,6 +66,7 @@ async function uploadLog(date: string): Promise<void> {
 
 export const providerLogger = createLogger({
   service,
+  omitService: true,
   onLine: (line) => writeLine(line),
 });
 
