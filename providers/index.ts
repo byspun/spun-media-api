@@ -359,16 +359,9 @@ async function resolveProviderFn(provider: ScheduledProvider, capability: Capabi
 /** Builds the per-provider configuration object passed as the second argument. */
 function providerConfig(name: ProviderId): unknown {
   switch (name) {
-    case 'moviebox':
-      return { baseUrl: env.movieboxBase, secret: env.movieboxSecret, apiKey: env.movieboxSecret };
     case 'daratech':
       return { baseUrl: env.daratechBase, apiKey: env.daratechKey };
     case 'castle':
-    case 'netmirror':
-    case 'vidlink':
-    case '4khdhub':
-    case 'dvdplay':
-    case 'streamflix':
       return env.tmdbKey;
     default:
       return undefined;
@@ -485,12 +478,13 @@ function input(q: any): any {
 }
 
 /** Mirrors the original per-request gating: which registered providers may run for this input. */
+/** Mirrors the original per-request gating: which registered providers may run for this input. */
 function eligibleForStream(provider: ScheduledProvider, value: any): boolean {
   if (value.type === 'anime') return Number.isFinite(value.anilist_id);
   const hasTmdb = Number.isFinite(value.tmdb_id);
   const hasMoviebox = typeof value.moviebox_id === 'string' && value.moviebox_id.length > 0;
   if (!hasTmdb && !hasMoviebox) return false;
-  if (provider.name === 'moviebox') return hasMoviebox;
+  if (provider.name === 'daratech') return true;
   return hasTmdb;
 }
 
@@ -617,7 +611,7 @@ app.get('/stream', async (request, reply) => {
   const value = input(q);
   const identifierValid = value.type === 'anime'
     ? Number.isFinite(value.anilist_id)
-    : Number.isFinite(value.tmdb_id) || (typeof value.moviebox_id === 'string' && /^\d+$/.test(value.moviebox_id));
+    : Number.isFinite(value.tmdb_id);
   if (!value.title || !identifierValid) {
     return reply.code(400).send({
       code: 'BAD_REQUEST',

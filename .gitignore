@@ -27,3 +27,4 @@ CLAUDE.md
 .copilot/
 .cursor/
 .windsurfrules
+.env

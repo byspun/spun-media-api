@@ -3,11 +3,12 @@ import { bestTitleScore, decodeEntities, dedupeStreams, fetchText, getAniListMed
 import type { AnimeProviderInput, RawStream } from './internal/types.js';
 
 const BASE = 'https://www.animegg.org';
+const REFERER = 'https://www.animegg.org/';
 
 type Episode = { number: number; title: string; epSlug: string; hasSub: boolean; hasDub: boolean };
 
 async function search(query: string): Promise<Array<{ slug: string; text: string }>> {
-  const html = await fetchText(`${BASE}/search/?q=${encodeURIComponent(query)}`);
+  const html = await fetchText(`${BASE}/search/?q=${encodeURIComponent(query)}`, { Referer: REFERER });
   const results: Array<{ slug: string; text: string }> = [];
   for (const match of html.matchAll(/<a\b[^>]*class=["'][^"']*\bmse\b[^"']*["'][^>]*>[\s\S]*?<\/a>/gi)) {
     const block = match[0];
@@ -37,7 +38,7 @@ async function findShow(input: AnimeProviderInput, media: any): Promise<string> 
 }
 
 async function scrapeSeries(slug: string): Promise<Episode[]> {
-  const html = await fetchText(`${BASE}/series/${slug}`);
+  const html = await fetchText(`${BASE}/series/${slug}`, { Referer: REFERER });
   const episodes: Episode[] = [];
   for (const match of html.matchAll(/<li\b[^>]*>([\s\S]*?)<\/li>/gi)) {
     const block = match[1];
@@ -56,7 +57,7 @@ async function scrapeSeries(slug: string): Promise<Episode[]> {
 }
 
 async function scrapeEmbed(embedId: string): Promise<Array<{ url: string; quality: string }>> {
-  const html = await fetchText(`${BASE}/embed/${embedId}`, { Referer: BASE });
+  const html = await fetchText(`${BASE}/embed/${embedId}`, { Referer: REFERER });
   const sourceText = html.match(/var\s+videoSources\s*=\s*(\[[\s\S]*?\]);/)?.[1];
   if (!sourceText) return [];
   let parsed: any[] = [];
@@ -72,7 +73,7 @@ async function scrapeEmbed(embedId: string): Promise<Array<{ url: string; qualit
 }
 
 async function scrapeEpisodeWatch(epSlug: string, audio: 'sub' | 'dub'): Promise<RawStream[]> {
-  const html = await fetchText(`${BASE}/${epSlug}`, { Referer: BASE });
+  const html = await fetchText(`${BASE}/${epSlug}`, { Referer: REFERER });
   const tabs: Array<{ id: string; server: string; audio: 'sub' | 'dub' }> = [];
   for (const match of html.matchAll(/<a\b[^>]*data-toggle=["']tab["'][^>]*>/gi)) {
     const tag = match[0];

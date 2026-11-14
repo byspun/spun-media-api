@@ -63,22 +63,13 @@
 {
   "providers": [
     {
-      "name": "anikoto",
-      "module": "./anikoto.ts",
-      "enabled": true,
-      "type": ["anime"],
-      "capabilities": ["streaming"],
-      "supportedIds": ["anilist"],
-      "priority_stream": 1
-    },
-    {
       "name": "kaa",
       "module": "./kaa.ts",
       "enabled": true,
       "type": ["anime"],
       "capabilities": ["streaming"],
       "supportedIds": ["anilist"],
-      "priority_stream": 2
+      "priority_stream": 1
     },
     {
       "name": "animegg",
@@ -87,7 +78,7 @@
       "type": ["anime"],
       "capabilities": ["streaming"],
       "supportedIds": ["anilist"],
-      "priority_stream": 3
+      "priority_stream": 2
     },
     {
       "name": "reanime",
@@ -95,44 +86,63 @@
       "enabled": true,
       "type": ["anime"],
       "capabilities": ["streaming"],
-      "supportedIds": ["anilist"],
-      "priority_stream": 4
+      "supportedIds": ["anilist", "mal"],
+      "priority_stream": 3
     },
     {
-      "name": "animedunya",
-      "module": "./animedunya.ts",
-      "enabled": true,
-      "type": ["anime"],
-      "capabilities": ["streaming"],
-      "supportedIds": ["mal"],
-      "priority_stream": 5
-    },
-    {
-      "name": "anineko",
-      "module": "./anineko.ts",
-      "enabled": true,
-      "type": ["anime"],
-      "capabilities": ["streaming"],
-      "supportedIds": ["anilist"],
-      "priority_stream": 6
-    },
-    {
-      "name": "anidbapp",
-      "module": "./anidbapp.ts",
+      "name": "anikoto",
+      "module": "./anikoto.ts",
       "enabled": true,
       "type": ["anime"],
       "capabilities": ["streaming"],
       "supportedIds": ["anilist", "mal"],
-      "priority_stream": 7
+      "priority_stream": 4
     },
     {
-      "name": "anibd",
-      "module": "./anibd.ts",
+      "name": "anizone",
+      "module": "./anizone.ts",
       "enabled": true,
       "type": ["anime"],
       "capabilities": ["streaming"],
       "supportedIds": ["anilist"],
-      "priority_stream": 8
+      "priority_stream": 5
+    },
+    {
+      "name": "mkissa",
+      "module": "./mkissa.ts",
+      "enabled": true,
+      "type": ["anime", "movies", "series"],
+      "capabilities": ["streaming", "downloading"],
+      "supportedIds": ["anilist", "tmdb"],
+      "priority_stream": 6,
+      "priority_download": 2
+    },
+    {
+      "name": "animeonsen",
+      "module": "./animeonsen.ts",
+      "enabled": true,
+      "type": ["anime"],
+      "capabilities": ["streaming"],
+      "supportedIds": ["anilist"],
+      "priority_stream": 7
+    },
+    {
+      "name": "playimdb",
+      "module": "./playimdb.ts",
+      "enabled": true,
+      "type": ["movies", "series"],
+      "capabilities": ["streaming"],
+      "supportedIds": ["tmdb"],
+      "priority_stream": 2
+    },
+    {
+      "name": "moviesdrive",
+      "module": "./moviesdrive.ts",
+      "enabled": true,
+      "type": ["movies", "series"],
+      "capabilities": ["downloading"],
+      "supportedIds": ["tmdb"],
+      "priority_download": 2
     },
     {
       "name": "castle",
@@ -144,68 +154,14 @@
       "priority_stream": 1
     },
     {
-      "name": "moviebox",
-      "module": "./moviebox.ts",
-      "enabled": true,
-      "type": ["movies", "series"],
-      "capabilities": ["streaming", "downloading"],
-      "supportedIds": ["moviebox"],
-      "priority_stream": 2,
-      "priority_download": 1
-    },
-    {
       "name": "daratech",
       "module": "./daratech.ts",
       "enabled": true,
       "type": ["movies", "series"],
-      "capabilities": ["streaming"],
+      "capabilities": ["streaming", "downloading"],
       "supportedIds": [],
-      "priority_stream": 3
-    },
-    {
-      "name": "netmirror",
-      "module": "./netmirror.ts",
-      "enabled": true,
-      "type": ["movies", "series"],
-      "capabilities": ["streaming"],
-      "supportedIds": ["tmdb"],
-      "priority_stream": 4
-    },
-    {
-      "name": "vidlink",
-      "module": "./vidlink.ts",
-      "enabled": true,
-      "type": ["movies", "series"],
-      "capabilities": ["streaming"],
-      "supportedIds": ["tmdb"],
-      "priority_stream": 5
-    },
-    {
-      "name": "4khdhub",
-      "module": "./4khdhub.ts",
-      "enabled": true,
-      "type": ["movies", "series"],
-      "capabilities": ["downloading"],
-      "supportedIds": ["tmdb"],
-      "priority_download": 2
-    },
-    {
-      "name": "dvdplay",
-      "module": "./dvdplay.ts",
-      "enabled": true,
-      "type": ["movies"],
-      "capabilities": ["downloading"],
-      "supportedIds": ["tmdb"],
-      "priority_download": 3
-    },
-    {
-      "name": "streamflix",
-      "module": "./streamflix.ts",
-      "enabled": true,
-      "type": ["movies", "series"],
-      "capabilities": ["downloading"],
-      "supportedIds": ["tmdb"],
-      "priority_download": 4
+      "priority_stream": 3,
+      "priority_download": 1
     }
   ]
 }

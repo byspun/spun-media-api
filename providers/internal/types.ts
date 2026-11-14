@@ -13,10 +13,7 @@ export interface ManifestProviderEntry {
   priority_subtitles?: unknown;
 }
 
-export type ProviderId =
-  | 'moviebox' | 'daratech' | 'castle' | 'netmirror' | 'vidlink'
-  | '4khdhub' | 'dvdplay' | 'streamflix'
-  | 'anikoto' | 'kaa' | 'animegg' | 'reanime' | 'animedunya' | 'anineko' | 'anidbapp' | 'anibd';
+export type ProviderId = 'daratech' | 'castle' | 'kaa' | 'animegg' | 'anikoto' | 'mkissa' | 'animeonsen' | 'playimdb' | 'moviesdrive' | 'reanime' | 'anizone';
 
 export type ProviderCategory = 'movie' | 'tv' | 'anime';
 export type StreamFormat = 'mp4' | 'hls' | 'dash' | 'mkv';
@@ -27,7 +24,7 @@ export interface RawSubtitle {
   language: string;
   language_code: string;
   format: 'vtt' | 'srt';
-  provider: ProviderId | 'subtitle-catalog' | 'daratech-subtitles';
+  provider: ProviderId;
   headers?: Record<string, string>;
 }
 

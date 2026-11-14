@@ -4,11 +4,13 @@ import type { AnimeProviderInput, RawStream } from './internal/types.js';
 
 const BASE = 'https://kaa.lt';
 const HLS_BASE = 'https://hls.krussdomi.com/manifest';
+const KAA_REFERER = 'https://kaa.lt/';
+const HLS_REFERER = 'https://krussdomi.com/';
 
 async function search(query: string): Promise<any[]> {
   const response = await fetch(`${BASE}/api/fsearch`, {
     method: 'POST',
-    headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json', 'Content-Type': 'application/json' },
+    headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json', 'Content-Type': 'application/json', Referer: KAA_REFERER },
     body: JSON.stringify({ page: 1, query }),
     signal: AbortSignal.timeout(25_000),
   });
@@ -18,11 +20,11 @@ async function search(query: string): Promise<any[]> {
 }
 
 async function showInfo(slug: string): Promise<any> {
-  return fetchJson<any>(`${BASE}/api/show/${encodeURIComponent(slug)}`);
+  return fetchJson<any>(`${BASE}/api/show/${encodeURIComponent(slug)}`, { headers: { Referer: KAA_REFERER } } as any);
 }
 
 async function episodePage(slug: string, episode: number): Promise<any> {
-  return fetchJson<any>(`${BASE}/api/show/${encodeURIComponent(slug)}/episodes?ep=${episode}&lang=ja-JP`);
+  return fetchJson<any>(`${BASE}/api/show/${encodeURIComponent(slug)}/episodes?ep=${episode}&lang=ja-JP`, { headers: { Referer: KAA_REFERER } } as any);
 }
 
 async function allEpisodes(slug: string): Promise<any[]> {
@@ -81,13 +83,13 @@ export async function getKaaStreams(input: AnimeProviderInput): Promise<RawStrea
     const episode = episodes.find((value: any) => Number(value.episode_number) === Number(input.episode));
     if (!episode?.slug) return [];
     const fullSlug = `ep-${input.episode}-${episode.slug}`;
-    const episodeData = await fetchJson<any>(`${BASE}/api/show/${encodeURIComponent(series.slug)}/episode/${encodeURIComponent(fullSlug)}`);
+    const episodeData = await fetchJson<any>(`${BASE}/api/show/${encodeURIComponent(series.slug)}/episode/${encodeURIComponent(fullSlug)}`, { headers: { Referer: KAA_REFERER } } as any);
     const streams: RawStream[] = [];
     for (const server of Array.isArray(episodeData?.servers) ? episodeData.servers : []) {
       const source = String(server?.src ?? '');
       const id = source.match(/[?&]id=([^&]+)/)?.[1];
       if (!id) continue;
-      const stream = safeStream({ url: `${HLS_BASE}/${id}/master.m3u8`, type: 'hls', quality: 'auto' }, 'kaa', input.dub ? 'English' : 'Japanese', 'hls', { Referer: 'https://krussdomi.com/' });
+      const stream = safeStream({ url: `${HLS_BASE}/${id}/master.m3u8`, type: 'hls', quality: 'auto' }, 'kaa', input.dub ? 'English' : 'Japanese', 'hls', { Referer: KAA_REFERER });
       if (stream) streams.push(stream);
     }
     return attachSubtitles(dedupeStreams(streams), []);
