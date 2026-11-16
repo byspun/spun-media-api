@@ -1,323 +1,232 @@
-import { fetchJson, fetchWithTimeout } from './internal/http.js';
-import { isSafeHttpUrl, detectFormat, normalizeQuality } from './internal/utils.js';
-import type { AnimeProviderInput, RawStream, RawSubtitle, ProviderId } from './internal/types.js';
+// Anikoto anime provider — direct HLS via MegaPlay embed extraction.
+// Upstream: anikoto.cz
+//   search:       /search?keyword=<title>
+//   anime id:     /watch/{slug} (data-id attribute)
+//   episodes:     /ajax/episode/list/{animeId}      → HTML rows with data-num/data-ids
+//   servers:      /ajax/server/list?servers={ids}   → HTML rows with data-link-id/data-sv-id
+//   server link:  /ajax/server?get={linkId}         → { result: { url: megaplay embed } }
+//   stream:       MegaPlayExtractor on the embed    → master.m3u8 + subtitle tracks
+// Title-only matching (no AniList/MAL ID support).
+// Ported faithfully from ultrasrc src/providers/anime/anikoto.ts.
 
-interface AnikotoEpisode {
-  number: number;
-  ids: string;
-  hasSub: boolean;
-  hasDub: boolean;
-  malId: number | null;
-  slug: string;
-  timestamp: string;
-  title: string;
+import { extractMegaPlay } from './internal/megaplay.js';
+import { attachSubtitles } from './internal/normalizer.js';
+import { detectFormat, isSafeHttpUrl, uniqueBy } from './internal/utils.js';
+import type { AnimeProviderInput, RawStream, RawSubtitle } from './internal/types.js';
+
+const BASE = 'https://anikoto.cz';
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125 Safari/537.36';
+
+async function get(url: string, headers: Record<string, string> = {}): Promise<{ status: number; body: string }> {
+  const res = await fetch(url, {
+    headers: { 'User-Agent': UA, ...headers },
+    signal: AbortSignal.timeout(15_000),
+  });
+  return { status: res.status, body: await res.text() };
 }
 
-const ANIKOTO_DOMAIN = 'https://anikototv.bz';
-const NEXABLOOM_DOMAIN = 'https://fetch.nexabloom.top';
-const REFERER = 'https://megaplay.buzz/';
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+async function searchAnime(title: string): Promise<string> {
+  const url = `${BASE}/search?keyword=${encodeURIComponent(title)}`;
+  const r = await get(url);
+  if (r.status !== 200) throw new Error(`anikoto search -> HTTP ${r.status}`);
 
-interface EmbedStream {
-  url: string;
-  quality?: string;
-  label?: string;
-  resolution?: string;
-  type?: string;
-}
-
-interface ExtractedData {
-  sources?: EmbedStream[];
-  tracks?: { file: string; label: string; default?: boolean; lang?: string }[];
-  intro?: { start: number; end: number };
-  outro?: { start: number; end: number };
-  origin?: string;
-}
-
-// Check if URL contains base64-encoded m3u8
-function isBase64M3u8(url: string): boolean {
-  return url.includes('#aHR0c') && url.split('#')[1].length > 10;
-}
-
-// Decode base64 encoded m3u8 URL
-function decodeBase64M3u8(url: string): string | null {
-  try {
-    const encoded = url.split('#')[1];
-    if (!encoded) return null;
-    return atob(encoded);
-  } catch {
-    return null;
+  // Collect /watch/{slug} links from search results; strip any /ep-N suffix.
+  const linkRegex = /href="([^"]*\/watch\/[^"\s]+)"/g;
+  const results: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = linkRegex.exec(r.body)) !== null) {
+    let href = match[1];
+    if (href.includes('/ep-')) href = href.split('/ep-')[0];
+    if (!results.includes(href)) results.push(href);
   }
+
+  if (!results.length) throw new Error(`anikoto search: no results for '${title}'`);
+  return results[0];
 }
 
-// Detect stream format from URL
-function detectFormatFromUrl(url: string): 'mp4' | 'hls' | 'unknown' {
-  if (url.includes('.m3u8')) return 'hls';
-  if (url.includes('.mp4') || url.includes('.mp4?')) return 'mp4';
-  return 'unknown';
+async function getAnimeInfo(animeSlug: string): Promise<{ id: string; watchUrl: string }> {
+  const watchUrl = `${BASE}/watch/${animeSlug}`;
+  const r = await get(watchUrl);
+  if (r.status !== 200) throw new Error(`anikoto anime info -> HTTP ${r.status}`);
+
+  const idMatch = /data-id="(\d+)"/.exec(r.body);
+  const animeId = idMatch ? idMatch[1] : null;
+  if (!animeId) throw new Error('anikoto: could not extract anime ID');
+
+  return { id: animeId, watchUrl };
 }
 
-// Detect subtitle format from URL
-function detectSubtitleFormat(url: string): 'vtt' | 'srt' {
-  if (url.toLowerCase().includes('.srt')) return 'srt';
-  return 'vtt';
+interface EpisodeInfo {
+  num: number;
+  id: string;
+  dataIds?: string;
+}
+
+async function getEpisodeList(animeId: string): Promise<EpisodeInfo[]> {
+  const url = `${BASE}/ajax/episode/list/${animeId}`;
+  const r = await get(url, { 'X-Requested-With': 'XMLHttpRequest', Referer: `${BASE}/` });
+  if (r.status !== 200) throw new Error(`anikoto episode list -> HTTP ${r.status}`);
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(r.body);
+  } catch {
+    throw new Error('anikoto: invalid episode list JSON');
+  }
+
+  const html = parsed.result || parsed.html || '';
+  const aRegex = /<a\s+[^>]*>/gi;
+  const episodes: EpisodeInfo[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = aRegex.exec(html)) !== null) {
+    const tag = match[0];
+    const numMatch = /data-num="(\d+)"/i.exec(tag);
+    const idMatch = /data-id="([^"]+)"/i.exec(tag);
+    const idsMatch = /data-ids="([^"]+)"/i.exec(tag);
+    if (numMatch && idMatch) {
+      episodes.push({
+        num: parseInt(numMatch[1], 10),
+        id: idMatch[1],
+        dataIds: idsMatch ? idsMatch[1] : undefined,
+      });
+    }
+  }
+  return episodes;
+}
+
+interface ServerInfo {
+  name: string;
+  linkId: string;
+  svId?: string;
+}
+
+async function getServerList(dataIds: string, watchUrl: string): Promise<ServerInfo[]> {
+  const url = `${BASE}/ajax/server/list?servers=${encodeURIComponent(dataIds)}`;
+  const r = await get(url, { 'X-Requested-With': 'XMLHttpRequest', Referer: watchUrl });
+  if (r.status !== 200) return [];
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(r.body);
+  } catch {
+    return [];
+  }
+
+  const html = parsed.result || '';
+  const liRegex = /<li\s+([^>]*?)>([^<]*)<\/li>/gi;
+  const servers: ServerInfo[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = liRegex.exec(html)) !== null) {
+    const attrs = match[1];
+    const name = match[2].trim();
+    const linkIdM = /data-link-id="([^"]+)"/i.exec(attrs);
+    const svIdM = /data-sv-id="([^"]+)"/i.exec(attrs);
+    if (linkIdM) {
+      servers.push({ name, linkId: linkIdM[1], svId: svIdM ? svIdM[1] : undefined });
+    }
+  }
+  return servers;
+}
+
+async function resolveServerEmbed(linkId: string, referer: string): Promise<string> {
+  const r = await get(`${BASE}/ajax/server?get=${encodeURIComponent(linkId)}`, {
+    'X-Requested-With': 'XMLHttpRequest',
+    Referer: referer,
+  });
+  if (r.status !== 200) throw new Error(`anikoto server -> HTTP ${r.status}`);
+  const json = JSON.parse(r.body) as { result?: { url?: string } };
+  const embedUrl = json?.result?.url;
+  if (!embedUrl) throw new Error('anikoto: server returned no embed url');
+  return embedUrl;
+}
+
+/** Best-effort language match on a MegaPlay subtitle track label. */
+function trackIsDub(label?: string): boolean {
+  return /dub|audio\s*(jap|english|indonesian|thai|portuguese|spanish|french|german)/i.test(label ?? '');
 }
 
 export async function getAnikotoStreams(input: AnimeProviderInput): Promise<RawStream[]> {
-  const streams: RawStream[] = [];
-  const subtitles: RawSubtitle[] = [];
-  const seenStreams = new Set<string>();
-  const seenSubtitles = new Set<string>();
-
   try {
-    // Search for the anime on anikoto - note domain is .bz
-    const searchResponse = await fetchWithTimeout(
-      `${ANIKOTO_DOMAIN}/filter?keyword=${encodeURIComponent(input.title)}`,
-      {
-        headers: {
-          Referer: REFERER,
-          'User-Agent': UA,
-        },
-        timeout: 15_000,
-      }
-    );
-    const searchHtml = await searchResponse.text()
-      .catch(() => '');
-    const searchHtmlClean = searchHtml.replace(/\r?\n|\r/g, ' ');
+    // 1. Search for the anime → first /watch/{slug} link.
+    const searchUrl = await searchAnime(input.title);
+    const parsedUrl = new URL(searchUrl.startsWith('http') ? searchUrl : `${BASE}${searchUrl}`);
+    const animeSlug = parsedUrl.pathname.startsWith('/watch/') ? parsedUrl.pathname.split('/')[2] : parsedUrl.pathname.split('/').filter(Boolean)[1] ?? '';
 
-    if (!searchHtmlClean) {
-      return [];
-    }
+    // 2. Watch page → anime id.
+    const animeInfo = await getAnimeInfo(animeSlug);
 
-    // Extract candidate shows using the selector - watch for .bz domain
-    const candidateRegex = /<a\s+class="name d-title"\s+href="https:\/\/anikototv\.bz\/watch\/([^"]+)"/g;
-    const candidates: { slug: string; title: string }[] = [];
+    // 3. Episode list → target episode (fall back to first available).
+    const episodes = await getEpisodeList(animeInfo.id);
+    const targetEp = episodes.find(e => e.num === input.episode) ?? episodes[0];
+    if (!targetEp) throw new Error(`anikoto: episode ${input.episode} not found`);
 
-    let match: RegExpExecArray | null;
-    while ((match = candidateRegex.exec(searchHtmlClean)) !== null) {
-      const slug = match[1];
-      const titles = searchHtmlClean.slice(match.index!, match.index! + 500)
-        .match(/data-jp="([^"]*)"[^>]*>([^<]*)<\/a>/);
-      const title = titles?.[2]?.replace(/<[^>]*>/g, '').trim() || slug;
-      if (!candidates.some(c => c.slug === slug)) {
-        candidates.push({ slug, title });
-      }
-    }
+    const audio = input.dub ? 'Dub' : 'Original';
+    const streams: RawStream[] = [];
+    const subtitles: RawSubtitle[] = [];
+    const seen = new Set<string>();
+    const seenSubs = new Set<string>();
 
-    if (candidates.length === 0) {
-      return [];
-    }
+    // 4. Try each server until one yields a playable stream.
+    if (targetEp.dataIds) {
+      const servers = await getServerList(targetEp.dataIds, animeInfo.watchUrl);
 
-    // Inspect first candidate to get episode list
-    const watchResponse = await fetchWithTimeout(
-      `${ANIKOTO_DOMAIN}/watch/${candidates[0].slug}`,
-      {
-        headers: {
-          Referer: REFERER,
-          'User-Agent': UA,
-        },
-        timeout: 15_000,
-      }
-    );
-    const watchHtml = await watchResponse.text()
-      .catch(() => '');
+      for (const server of servers) {
+        try {
+          const embedUrl = await resolveServerEmbed(server.linkId, animeInfo.watchUrl);
+          if (!isSafeHttpUrl(embedUrl)) continue;
 
-    const showIdMatch = watchHtml.match(/data-id="(\d+)"/);
-    if (!showIdMatch) {
-      return [];
-    }
-    const showId = showIdMatch[1];
+          const extracted = await extractMegaPlay(embedUrl);
+          if (!extracted.fileUrl) continue;
 
-    // Get episode list from AJAX endpoint
-    const episodesResponse = await fetchJson(
-      `${ANIKOTO_DOMAIN}/ajax/episode/list/${showId}`,
-      {
-        headers: {
-          Referer: `${ANIKOTO_DOMAIN}/watch/${candidates[0].slug}`,
-        },
-        timeout: 15_000,
-      }
-    );
+          const format = detectFormat(extracted.fileUrl);
+          if (!isSafeHttpUrl(extracted.fileUrl) || format === 'unknown') continue;
 
-    const episodesResponseData = episodesResponse as { result?: string } | null;
-    const episodesData = episodesResponseData?.result;
-    if (!episodesData || typeof episodesData !== 'string') {
-      return [];
-    }
+          // Language guard: skip dub-only sources when sub was requested, and
+          // vice-versa, using the server name / track labels as a heuristic.
+          const serverName = server.name.toLowerCase();
+          const serverIsDub = /dub/i.test(serverName) || extracted.tracks.some(t => trackIsDub(t.label));
+          if (serverIsDub !== input.dub) continue;
 
-    const episodeRegex = /<a\s+[^>]*data-id="([^"]*)"[^>]*>([^<]*)<\/a>/g;
-    const episodeRows: RegExpMatchArray[] = [];
-    let episodeMatch: RegExpExecArray | null;
-    while ((episodeMatch = episodeRegex.exec(episodesData)) !== null) {
-      episodeRows.push(episodeMatch);
-    }
-
-    // Find the target episode
-    let targetEpisode: AnikotoEpisode | null = null;
-    for (const row of episodeRows) {
-      const tag = row[0];
-      const numStr = tag.match(/data-num="(\d+)"/)?.[1] || '0';
-      const num = parseInt(numStr, 10);
-      if (num !== input.episode) continue;
-
-      const titleMatch = tag.match(/<span\s+class="d-title"[^>]*>([^<]*)<\/span>/i);
-      const title = titleMatch?.[1]?.replace(/<[^>]*>/g, '').trim() || `Episode ${num}`;
-
-      const getAttr = (name: string) => tag.match(/data-${name}="([^"]*)"/)?.[1] || '';
-      const ids = getAttr('ids');
-      const hasSub = getAttr('sub') === '1';
-      const hasDub = getAttr('dub') === '1';
-      const malId = Number(getAttr('mal')) || null;
-      const slug = getAttr('slug');
-      const timestamp = getAttr('timestamp');
-
-      if ((input.dub && hasDub) || (!input.dub && hasSub)) {
-        targetEpisode = { number: num, ids, hasSub, hasDub, malId, slug, timestamp, title };
-      }
-      if (targetEpisode) break;
-    }
-
-    if (!targetEpisode) {
-      return [];
-    }
-
-    // Get server list
-    const serverResponse = await fetchJson(
-      `${ANIKOTO_DOMAIN}/ajax/server/list?servers=${encodeURIComponent(targetEpisode.ids)}`,
-      {
-        headers: {
-          Referer: `${ANIKOTO_DOMAIN}/`,
-        },
-        timeout: 15_000,
-      }
-    );
-
-    const serverResponseData = serverResponse as { result?: string } | null;
-    const serverHtml = serverResponseData?.result;
-    if (!serverHtml || typeof serverHtml !== 'string') {
-      return [];
-    }
-
-    // Parse server items (download and stream)
-    const typeRegex = /<div\s+class="type"\s+data-type="([^"]+)">([^<]*<\/ul>\s*<\/div>)/g;
-    const serverTypeRegex = /<li\s+([^>]*data-link-id[^>]*)>([^<]*)<\/li>/g;
-
-    let typeMatch: RegExpExecArray | null;
-    while ((typeMatch = typeRegex.exec(serverHtml)) !== null) {
-      const typeName = typeMatch[1];
-      const typeItemsHtml = typeMatch[2];
-      const typeItemsString = typeItemsHtml.replace(/\r?\n|\r/g, ' ');
-
-      let itemMatch: RegExpExecArray | null;
-      while ((itemMatch = serverTypeRegex.exec(typeItemsString)) !== null) {
-        const tag = itemMatch[0];
-        const linkId = tag.match(/data-link-id="([^"]*)"/)?.[1] || '';
-
-        let serverName = itemMatch[2]?.replace(/<[^>]+>/g, '').trim() || '';
-        if (!serverName) continue;
-
-        // Skip download items if we only want streaming
-        const isDownload = typeName === 'dl' ||
-          serverName.toLowerCase().includes('download') ||
-          serverName.toLowerCase().includes('kiwi');
-        if (isDownload) continue;
-
-        // Resolve stream URL
-        let hlsSources: string[] = [];
-
-        // Check for base64 encoded m3u8
-        if (linkId.includes('#aHR0c')) {
-          const decoded = decodeBase64M3u8(linkId);
-          if (decoded) {
-            hlsSources.push(decoded);
-          }
-        }
-
-        // Fetch and extract HLS sources if needed
-        if (hlsSources.length === 0 && linkId && !linkId.startsWith('http')) {
-          try {
-            const resolvedResponse = await fetchJson(
-              `${ANIKOTO_DOMAIN}/ajax/server?get=${encodeURIComponent(linkId)}`,
-              {
-                headers: {
-                  Referer: `${ANIKOTO_DOMAIN}/`,
-                },
-                timeout: 15_000,
-              }
-            );
-
-            const resolvedData = resolvedResponse as { result?: { url?: string } };
-            const resolvedUrl = resolvedData?.result?.url;
-            if (resolvedUrl) {
-              if (resolvedUrl.includes('#aHR0c')) {
-                const decoded = decodeBase64M3u8(resolvedUrl);
-                if (decoded) hlsSources.push(decoded);
-              } else {
-                hlsSources.push(resolvedUrl);
-              }
-            }
-          } catch {
-            // Continue to next server
-          }
-        }
-
-        // Create stream from HLS sources
-        for (const hlsUrl of hlsSources) {
-          const streamKey = `${hlsUrl}:${input.dub ? 'dub' : 'sub'}`;
-          if (seenStreams.has(streamKey)) continue;
-          seenStreams.add(streamKey);
-
-          const existingIndex = streams.findIndex(s => s.url === hlsUrl);
-          if (existingIndex !== -1) {
-            // Merge with existing stream
-            streams[existingIndex].provider = 'anikoto';
-            streams[existingIndex].audio = input.dub ? 'Dub' : 'Original';
-          } else {
+          if (!seen.has(extracted.fileUrl)) {
+            seen.add(extracted.fileUrl);
             streams.push({
-              url: hlsUrl,
-              format: detectFormatFromUrl(hlsUrl) as 'hls',
-              quality: '1080p',
-              audio: input.dub ? 'Dub' : 'Original',
+              url: extracted.fileUrl,
+              format,
+              quality: 'auto',
+              audio,
+              provider: 'anikoto',
+              headers: extracted.headers,
+            });
+          }
+
+          // Subtitle tracks from the MegaPlay payload.
+          for (const track of extracted.tracks) {
+            if (!track.file || !isSafeHttpUrl(track.file)) continue;
+            if (track.kind && track.kind.toLowerCase() === 'thumbnails') continue;
+            if (seenSubs.has(track.file)) continue;
+            seenSubs.add(track.file);
+            const language = track.language || track.label || 'English';
+            const langBase = track.label || track.language || 'en';
+            subtitles.push({
+              url: track.file,
+              language,
+              language_code: langBase.slice(0, 2).toLowerCase() || 'en',
+              format: /\.srt($|[?#])/i.test(track.file) ? 'srt' : 'vtt',
               provider: 'anikoto',
             });
           }
+
+          // First server with playable output wins.
+          break;
+        } catch {
+          // Continue to the next server candidate.
         }
       }
     }
 
-    // Handle fallback embed URL
-    if (streams.length === 0 && targetEpisode.ids) {
-      try {
-        const fallbackResponse = await fetchJson(
-          `${ANIKOTO_DOMAIN}/ajax/server?get=${encodeURIComponent(targetEpisode.ids)}`,
-          {
-            headers: {
-              Referer: `${ANIKOTO_DOMAIN}/`,
-            },
-            timeout: 15_000,
-          }
-        );
-
-        const fallbackData = fallbackResponse as { result?: { url?: string } };
-        const fallbackUrl = fallbackData?.result?.url;
-        if (fallbackUrl && isSafeHttpUrl(fallbackUrl)) {
-          const format = detectFormatFromUrl(fallbackUrl);
-          streams.push({
-            url: fallbackUrl,
-            format: format as 'hls' | 'mp4',
-            quality: '1080p',
-            audio: input.dub ? 'Dub' : 'Original',
-            provider: 'anikoto',
-          });
-        }
-      } catch {
-        // Silently continue
-      }
-    }
-
+    return attachSubtitles(uniqueBy(streams, s => s.url), uniqueBy(subtitles, s => s.url));
   } catch (error) {
     console.error(`Anikoto error: ${String(error)}`);
+    return [];
   }
-
-  return streams;
 }

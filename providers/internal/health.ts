@@ -90,6 +90,10 @@ interface HealthCheckJob {
 }
 
 // Hardcoded test fixtures per media type
+// These are chosen to be widely available across providers and to exercise
+// the most common resolution paths. Providers that need specific quirks
+// (encrypted APIs, cookie sessions, etc.) are handled by the provider
+// implementation itself, not by the health check.
 const MOVIE_FIXTURE = {
   type: 'movie' as const,
   title: 'Inception',
@@ -108,7 +112,22 @@ const SERIES_FIXTURE = {
   episode: 1,
 };
 
+// Use Naruto (anilist_id=20) as the anime fixture — it's one of the most
+// widely available anime across providers and exercises the core resolution
+// path. Attack on Titan (16498) is also widely available but some providers
+// have catalog quirks with it.
 const ANIME_FIXTURE = {
+  type: 'anime' as const,
+  title: 'Naruto',
+  year: 2002,
+  anilist_id: 20,
+  mal_id: 20,
+  episode: 1,
+  dub: false,
+};
+
+// Fallback fixtures for providers that need different data
+const ANIME_FALLBACK_FIXTURE = {
   type: 'anime' as const,
   title: 'Attack on Titan',
   year: 2013,
@@ -118,12 +137,12 @@ const ANIME_FIXTURE = {
   dub: false,
 };
 
-type TestFixture = typeof MOVIE_FIXTURE | typeof SERIES_FIXTURE | typeof ANIME_FIXTURE;
+type TestFixture = typeof MOVIE_FIXTURE | typeof SERIES_FIXTURE | typeof ANIME_FIXTURE | typeof ANIME_FALLBACK_FIXTURE;
 
 function selectFixture(entry: ManifestProviderEntry): TestFixture | null {
   const types = (entry.type ?? []) as string[];
 
-  // Prefer anime if supported
+  // Prefer anime if supported — use Naruto (more widely available)
   if (types.includes('anime')) {
     return ANIME_FIXTURE;
   }
@@ -169,6 +188,16 @@ function isValidFixtureForProvider(fixture: TestFixture, entry: ManifestProvider
   }
 
   return true;
+}
+
+function isValidFixtureForProviderWithFallback(fixture: TestFixture, entry: ManifestProviderEntry): boolean {
+  // First check the primary fixture
+  if (isValidFixtureForProvider(fixture, entry)) return true;
+
+  // If primary fixture is anime and provider supports anime, check fallback fixture
+  if (fixture.type === 'anime' && isValidFixtureForProvider(ANIME_FALLBACK_FIXTURE, entry)) return true;
+
+  return false;
 }
 
 export class HealthMonitor {
@@ -232,7 +261,7 @@ export class HealthMonitor {
         continue;
       }
 
-      const valid = isValidFixtureForProvider(fixture, entry);
+      const valid = isValidFixtureForProviderWithFallback(fixture, entry);
       providerLogger.debug('health', `Provider "${entry.name}": capability=${capability}, fixture=${fixture.type}, valid=${valid}, supportedIds=${JSON.stringify(entry.supportedIds)}`);
 
       if (!valid) {
@@ -247,7 +276,7 @@ export class HealthMonitor {
     return jobs;
   }
 
-  /** Run a single provider health check */
+/** Run a single provider health check */
   private async checkProvider(job: HealthCheckJob): Promise<ProviderHealthResult> {
     const { provider, capability, fixture } = job;
     const startTime = Date.now();
@@ -270,6 +299,23 @@ export class HealthMonitor {
             checkedAt: new Date().toISOString(),
           };
         }
+
+        // If primary fixture failed and this is an anime provider, try fallback fixture
+        if (fixture.type === 'anime') {
+          const fallbackResult = await this.testStreamFn(provider, ANIME_FALLBACK_FIXTURE);
+          const fallbackStreams = fallbackResult.streams ?? [];
+          const fallbackValid = fallbackStreams.find(s => s && typeof s.url === 'string' && s.url.startsWith('http'));
+
+          if (fallbackValid) {
+            return {
+              provider,
+              status: 'healthy',
+              responseTimeMs: Date.now() - startTime,
+              checkedAt: new Date().toISOString(),
+            };
+          }
+        }
+
         // No valid stream returned
         return {
           provider,

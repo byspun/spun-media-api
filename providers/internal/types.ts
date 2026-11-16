@@ -13,7 +13,7 @@ export interface ManifestProviderEntry {
   priority_subtitles?: unknown;
 }
 
-export type ProviderId = 'daratech' | 'castle' | 'kaa' | 'animegg' | 'anikoto' | 'mkissa' | 'animeonsen' | 'playimdb' | 'moviesdrive' | 'reanime' | 'anizone';
+export type ProviderId = 'daratech' | 'castle' | 'kaa' | 'animegg' | 'anikoto' | 'mkissa' | 'animeonsen' | 'playimdb' | 'moviesdrive' | 'reanime' | 'anizone' | 'anikage' | 'anv' | 'framextv' | 'vidnest' | 'cinejoy' | 'cinesrc' | 'moviespro' | 'flixhq';
 
 export type ProviderCategory = 'movie' | 'tv' | 'anime';
 export type StreamFormat = 'mp4' | 'hls' | 'dash' | 'mkv';

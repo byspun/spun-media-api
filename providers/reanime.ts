@@ -1,355 +1,184 @@
-import { fetchJson, fetchWithTimeout } from './internal/http.js';
-import { isSafeHttpUrl, detectFormat, normalizeQuality } from './internal/utils.js';
+// Reanime anime provider — direct HLS via FlixCloud embed extraction.
+// Upstream: reanime.to (REST: /api/v1/search, /api/v1/anime/{slug},
+// /api/flix/{anilistId}/{episode}?mal={malId}) → FlixCloud embed (WASM-decrypted
+// master.m3u8 via internal/flixcloud.ts).
+// Server preference: HD-2 → HD-1 → first available, filtered by sub/dub.
+// Ported faithfully from ultrasrc src/providers/anime/reanime.ts.
+
+import { extractFlixCloud } from './internal/flixcloud.js';
+import { attachSubtitles } from './internal/normalizer.js';
+import { detectFormat, isSafeHttpUrl, uniqueBy } from './internal/utils.js';
 import type { AnimeProviderInput, RawStream, RawSubtitle } from './internal/types.js';
 
-const REANIME_BASE = 'https://reanime.to';
-const FLIXCLOUD_BASE = 'https://flixcloud.cc';
-const ANIZIP_API = 'https://api.ani.zip/mappings';
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
-const HEADERS = { 'User-Agent': UA, 'Accept': 'application/json, */*' };
+const BASE = 'https://reanime.to';
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125 Safari/537.36';
 
-// Flixcloud XOR decryption (playlist_key is base64, 32 bytes)
-function xorDecryptPlaylist(encryptedB64: string, playlistKeyB64: string): string | null {
-  try {
-    const encrypted = Buffer.from(encryptedB64, 'base64');
-    const key = Buffer.from(playlistKeyB64, 'base64');
-    if (key.length !== 32) return null;
-    const decrypted = Buffer.alloc(encrypted.length);
-    for (let i = 0; i < encrypted.length; i++) {
-      decrypted[i] = encrypted[i] ^ key[i % key.length];
-    }
-    return decrypted.toString('utf8');
-  } catch {
-    return null;
-  }
+interface ReanimeSearchItem {
+  anime_id: string;
+  anilist_id?: number;
+  mal_id?: number;
+  title: { english?: string; native?: string; romaji?: string };
+  format?: string;
+  episodes?: number;
 }
 
-async function searchReanime(query: string): Promise<Array<{ anime_id: string; title: { english?: string; romaji?: string }; cover_image?: { extra_large?: string; large?: string }; subbed?: number; dubbed?: number; episodes?: number }>> {
+interface ReanimeSearchResponse {
+  results?: ReanimeSearchItem[];
+  limit?: number;
+}
+
+interface ReanimeAnimeDetail {
+  anime_id: string;
+  anilist_id?: number;
+  mal_id?: number;
+  themoviedb_id?: number;
+  title: { english?: string; native?: string; romaji?: string };
+  format?: string;
+  episodes_total?: number;
+}
+
+interface ReanimeServer {
+  $id?: string;
+  serverName: string;
+  dataLink: string;
+  dataType: string; // "sub" | "dub"
+  continue?: boolean;
+  softsub?: boolean;
+}
+
+interface ReanimeFlixResponse {
+  success?: boolean;
+  servers?: ReanimeServer[];
+}
+
+async function getJson<T>(url: string): Promise<{ status: number; data: T | null }> {
   try {
-    const res = await fetchWithTimeout(`${REANIME_BASE}/api/v1/search?q=${encodeURIComponent(query)}&limit=10`, {
-      headers: HEADERS,
-      timeout: 15_000,
+    const res = await fetch(url, {
+      headers: { 'User-Agent': UA, Accept: 'application/json', Referer: `${BASE}/` },
+      signal: AbortSignal.timeout(15_000),
     });
-    if (!res.ok) return [];
-    const data = await res.json() as { results?: any[] };
-    return Array.isArray(data?.results) ? data.results : [];
+    if (!res.ok) return { status: res.status, data: null };
+    return { status: res.status, data: (await res.json()) as T };
   } catch {
-    return [];
+    return { status: 500, data: null };
   }
 }
 
-async function fetchAnimeDetail(animeId: string): Promise<{ anilist_id?: number; mal_id?: number; title?: { english?: string; romaji?: string }; subbed?: number; dubbed?: number; episodes?: number } | null> {
-  try {
-    const res = await fetchWithTimeout(`${REANIME_BASE}/api/v1/anime/${animeId}`, { headers: HEADERS, timeout: 15_000 });
-    if (!res.ok) return null;
-    return await res.json() as { anilist_id?: number; mal_id?: number; title?: { english?: string; romaji?: string }; subbed?: number; dubbed?: number; episodes?: number };
-  } catch {
-    return null;
+async function searchReanime(title: string, anilistId?: number): Promise<ReanimeSearchItem> {
+  const url = `${BASE}/api/v1/search?q=${encodeURIComponent(title)}`;
+  const res = await getJson<ReanimeSearchResponse>(url);
+  const results = res.data?.results;
+  if (!results?.length) {
+    throw new Error(`reanime search: no anime found for '${title}'`);
   }
+
+  // Prefer an exact AniList ID match, then exact title match, then first result.
+  if (anilistId) {
+    const found = results.find(r => r.anilist_id === anilistId);
+    if (found) return found;
+  }
+
+  const lower = title.toLowerCase();
+  const match = results.find(
+    r =>
+      r.title.english?.toLowerCase() === lower ||
+      r.title.romaji?.toLowerCase() === lower ||
+      r.title.native?.toLowerCase() === lower,
+  );
+
+  return match || results[0];
 }
 
-function extractAnilistIdFromCover(cover: any): number | null {
-  if (!cover) return null;
-  for (const url of [cover.extra_large, cover.large, cover.medium].filter(Boolean)) {
-    const m = url.match(/anilist\.co\/.*\/bx(\d+)-/);
-    if (m) return Number(m[1]);
-  }
-  return null;
+async function getAnimeDetail(slug: string): Promise<ReanimeAnimeDetail | null> {
+  const url = `${BASE}/api/v1/anime/${encodeURIComponent(slug)}`;
+  const res = await getJson<ReanimeAnimeDetail>(url);
+  return res.data;
 }
 
-async function resolveReanimeSeries(anilistId: number, title: string): Promise<{ animeId: string; title: string; anilistId: number; malId: number | null; subbed: number | null; dubbed: number | null; episodesCount: number | null } | null> {
-  const anizip = await fetchJson<{ mal_id?: number }>(`${ANIZIP_API}?anilist_id=${anilistId}`).catch(() => null);
-
-  const queries = [title, title.split(' ')[0]].filter(Boolean);
-  const candidates = new Map<string, any>();
-
-  for (const query of queries) {
-    const results = await searchReanime(query);
-    for (const r of results) {
-      if (r.anime_id && !candidates.has(r.anime_id)) candidates.set(r.anime_id, r);
-    }
-  }
-
-  for (const [id, r] of candidates) {
-    const coverId = extractAnilistIdFromCover(r.cover_image);
-    if (coverId && coverId === anilistId) {
-      return {
-        animeId: id,
-        title: r.title?.english || r.title?.romaji || id,
-        anilistId,
-        malId: null,
-        subbed: Number.isFinite(r.subbed) ? r.subbed : null,
-        dubbed: Number.isFinite(r.dubbed) ? r.dubbed : null,
-        episodesCount: Number.isFinite(r.episodes) ? r.episodes : null,
-      };
-    }
-  }
-
-  const needsDetail = Array.from(candidates.keys()).filter(id => extractAnilistIdFromCover(candidates.get(id)?.cover_image) === null);
-  for (const id of needsDetail) {
-    const detail = await fetchAnimeDetail(id);
-    if (detail?.anilist_id && Number(detail.anilist_id) === anilistId) {
-      return {
-        animeId: id,
-        title: detail.title?.english || detail.title?.romaji || candidates.get(id)?.title?.english || id,
-        anilistId,
-        malId: detail.mal_id || null,
-        subbed: Number.isFinite(detail.subbed) ? detail.subbed : null,
-        dubbed: Number.isFinite(detail.dubbed) ? detail.dubbed : null,
-        episodesCount: Number.isFinite(detail.episodes) ? detail.episodes : null,
-      };
-    }
-  }
-
-  if (anizip?.mal_id) {
-    for (const id of needsDetail) {
-      const detail = await fetchAnimeDetail(id);
-      if (detail?.mal_id && Number(detail.mal_id) === Number(anizip.mal_id)) {
-        return {
-          animeId: id,
-          title: detail.title?.english || detail.title?.romaji || id,
-          anilistId,
-          malId: Number(detail.mal_id),
-          subbed: Number.isFinite(detail.subbed) ? detail.subbed : null,
-          dubbed: Number.isFinite(detail.dubbed) ? detail.dubbed : null,
-          episodesCount: Number.isFinite(detail.episodes) ? detail.episodes : null,
-        };
-      }
-    }
-  }
-
-  return null;
-}
-
-async function fetchEpisodesList(animeId: string): Promise<Array<{ episode_number: number; title?: string; is_filler?: boolean; is_recap?: boolean; duration?: number; thumbnail?: string; aired?: string; description?: string }>> {
-  try {
-    const res = await fetchWithTimeout(`${REANIME_BASE}/api/v1/anime/${animeId}/episodes?limit=2000`, { headers: HEADERS, timeout: 15_000 });
-    if (!res.ok) return [];
-    const data = await res.json() as { data?: any[] };
-    return Array.isArray(data?.data) ? data.data : [];
-  } catch {
-    return [];
-  }
-}
-
-interface FlixcloudTokenResponse {
-  success: boolean;
-  playlist_key?: string;
-  key?: string;
-  subtitles?: Array<{ file: string; label: string; lang?: string; default?: boolean }>;
-  intro_chapter?: { start: number; end: number };
-  outro_chapter?: { start: number; end: number };
-  url?: string;
-}
-
-async function extractFlixcloudStream(embedUrl: string): Promise<{ url: string; key?: string; playlist_key?: string; subtitles?: Array<{ file: string; label: string; lang?: string; default?: boolean }> } | null> {
-  try {
-    // Fetch the embed page
-    const res = await fetchWithTimeout(embedUrl, {
-      headers: { ...HEADERS, Referer: `${REANIME_BASE}/`, Origin: REANIME_BASE },
-      timeout: 20_000
-    });
-    const embedHtml = await res.text().catch(() => '');
-
-    // Extract token from embed page - pattern: token: "xxx" or token='xxx'
-    const tokenMatch = embedHtml.match(/token\s*[:=]\s*["']([^"']+)["']/);
-    if (!tokenMatch) return null;
-
-    const token = tokenMatch[1];
-
-    // Get token data from flixcloud API
-    const tokenRes = await fetchWithTimeout(`${FLIXCLOUD_BASE}/api/token?token=${encodeURIComponent(token)}`, {
-      headers: { ...HEADERS, Referer: `${FLIXCLOUD_BASE}/`, Origin: FLIXCLOUD_BASE },
-      timeout: 15_000
-    });
-    const tokenData = await tokenRes.json().catch(() => ({})) as FlixcloudTokenResponse;
-
-    if (!tokenData.success) return null;
-
-    // Get playlist - the m3u8 is base64 encoded and XOR encrypted with playlist_key
-    const playlistRes = await fetchWithTimeout(`${FLIXCLOUD_BASE}/api/playlist?token=${encodeURIComponent(token)}`, {
-      headers: { ...HEADERS, Referer: `${FLIXCLOUD_BASE}/`, Origin: FLIXCLOUD_BASE },
-      timeout: 15_000
-    });
-    const playlistB64 = await playlistRes.text().catch(() => '');
-
-    if (!playlistB64) return null;
-
-    // Decrypt playlist if we have the key
-    let decryptedPlaylist = playlistB64;
-    if (tokenData.playlist_key) {
-      const decrypted = xorDecryptPlaylist(playlistB64, tokenData.playlist_key);
-      if (decrypted) decryptedPlaylist = decrypted;
-    }
-
-    // Parse m3u8 for master URL
-    const masterMatch = decryptedPlaylist.match(/https?:\/\/[^\s\n]+\.m3u8/);
-    const masterUrl = masterMatch?.[0] || tokenData.url;
-
-    if (!masterUrl || !isSafeHttpUrl(masterUrl)) return null;
-
-    const subs = (tokenData.subtitles || []).map(s => ({
-      file: s.file,
-      label: s.label || s.lang || 'English',
-      lang: s.lang,
-      default: s.default ?? false,
-    })).filter(s => isSafeHttpUrl(s.file));
-
-    return {
-      url: masterUrl,
-      key: tokenData.key,
-      playlist_key: tokenData.playlist_key,
-      subtitles: subs,
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function resolveStreams(animeId: string, anilistId: number, episode: number, audio: 'sub' | 'dub'): Promise<{ streams: RawStream[]; subtitles: RawSubtitle[] }> {
-  const streams: RawStream[] = [];
-  const subtitles: RawSubtitle[] = [];
-  const seenUrls = new Set<string>();
-
-  try {
-    // Use /api/flix endpoint which returns the servers directly
-    const flixRes = await fetchJson(`${REANIME_BASE}/api/flix/${anilistId}/${episode}`, { headers: HEADERS, timeout: 15_000 });
-    const flixData = flixRes as any;
-
-    if (!flixData?.success || !flixData?.servers) {
-      // Fallback to /api/watch
-      const watchRes = await fetchJson(`${REANIME_BASE}/api/watch/${animeId}/${episode}`, { headers: HEADERS, timeout: 15_000 });
-      const watchData = watchRes as any;
-
-      const links = [...(watchData?.episode_links ?? [])];
-      if (flixData?.success && flixData?.servers) {
-        const seen = new Set(links.map(s => s['$id']));
-        for (const s of flixData.servers) {
-          if (!seen.has(s['$id'])) links.push(s);
-        }
-      }
-
-      const audioTypes = audio === 'sub' ? ['sub', 's-sub'] : ['dub', 's-dub'];
-      const servers = links.filter((s: any) => audioTypes.includes(s.dataType));
-
-      const priority: Record<string, number> = { 'HD-2': 0, 'HD-1': 1 };
-      servers.sort((a: any, b: any) => (priority[a.serverName] ?? 9) - (priority[b.serverName] ?? 9));
-
-      const seenServers = new Set<string>();
-      const uniqueServers = servers.filter((s: any) => {
-        const key = `${s.serverName}:${s.dataType}:${s.dataLink}`;
-        if (seenServers.has(key)) return false;
-        seenServers.add(key);
-        return true;
-      });
-
-      for (const server of uniqueServers) {
-        try {
-          const extracted = await extractFlixcloudStream(server.dataLink);
-          if (!extracted?.url) continue;
-
-          const streamUrl = extracted.url;
-          if (!isSafeHttpUrl(streamUrl) || seenUrls.has(streamUrl)) continue;
-          seenUrls.add(streamUrl);
-
-          streams.push({
-            url: streamUrl,
-            format: detectFormat(streamUrl, 'hls') as 'hls' | 'mp4' | 'dash' | 'mkv',
-            quality: normalizeQuality('1080p'),
-            audio: audio === 'dub' ? 'English' : 'Japanese',
-            provider: 'reanime',
-            headers: { Referer: FLIXCLOUD_BASE, Origin: FLIXCLOUD_BASE },
-          });
-
-          for (const sub of (extracted.subtitles || [])) {
-            const langCode = (sub.lang || sub.label || 'en').split(' ')[0].toLowerCase();
-            if (!subtitles.some(s => s.language_code === langCode)) {
-              subtitles.push({
-                url: sub.file,
-                language: sub.label,
-                language_code: langCode,
-                format: 'vtt',
-                provider: 'reanime',
-              });
-            }
-          }
-        } catch {
-          continue;
-        }
-      }
-    } else {
-      // Use flixData servers directly
-      const audioTypes = audio === 'sub' ? ['sub', 's-sub'] : ['dub', 's-dub'];
-      const servers = flixData.servers.filter((s: any) => audioTypes.includes(s.dataType));
-
-      const priority: Record<string, number> = { 'HD-2': 0, 'HD-1': 1 };
-      servers.sort((a: any, b: any) => (priority[a.serverName] ?? 9) - (priority[b.serverName] ?? 9));
-
-      const seenServers = new Set<string>();
-      const uniqueServers = servers.filter((s: any) => {
-        const key = `${s.serverName}:${s.dataType}:${s.dataLink}`;
-        if (seenServers.has(key)) return false;
-        seenServers.add(key);
-        return true;
-      });
-
-      for (const server of uniqueServers) {
-        try {
-          const extracted = await extractFlixcloudStream(server.dataLink);
-          if (!extracted?.url) continue;
-
-          const streamUrl = extracted.url;
-          if (!isSafeHttpUrl(streamUrl) || seenUrls.has(streamUrl)) continue;
-          seenUrls.add(streamUrl);
-
-          streams.push({
-            url: streamUrl,
-            format: detectFormat(streamUrl, 'hls') as 'hls' | 'mp4' | 'dash' | 'mkv',
-            quality: normalizeQuality('1080p'),
-            audio: audio === 'dub' ? 'English' : 'Japanese',
-            provider: 'reanime',
-            headers: { Referer: FLIXCLOUD_BASE, Origin: FLIXCLOUD_BASE },
-          });
-
-          for (const sub of (extracted.subtitles || [])) {
-            const langCode = (sub.lang || sub.label || 'en').split(' ')[0].toLowerCase();
-            if (!subtitles.some(s => s.language_code === langCode)) {
-              subtitles.push({
-                url: sub.file,
-                language: sub.label,
-                language_code: langCode,
-                format: 'vtt',
-                provider: 'reanime',
-              });
-            }
-          }
-        } catch {
-          continue;
-        }
-      }
-    }
-  } catch (error) {
-    console.error(`Reanime stream error: ${String(error)}`);
-  }
-
-  return { streams, subtitles };
+async function getFlixServers(anilistId: number, episode: number, malId?: number): Promise<ReanimeServer[]> {
+  const malQuery = malId ? `?mal=${malId}` : '';
+  const url = `${BASE}/api/flix/${anilistId}/${episode}${malQuery}`;
+  const res = await getJson<ReanimeFlixResponse>(url);
+  return res.data?.servers || [];
 }
 
 export async function getReanimeStreams(input: AnimeProviderInput): Promise<RawStream[]> {
-  const streams: RawStream[] = [];
-
   try {
-    const series = await resolveReanimeSeries(input.anilist_id, input.title);
-    if (!series) return [];
+    // 1. Resolve the catalog entry. AniList ID lets us skip fuzzy matching when
+    //    the search endpoint returns it on results; otherwise title match.
+    const searchItem = await searchReanime(input.title, input.anilist_id);
+    let slug = searchItem.anime_id;
+    let anilistId = searchItem.anilist_id ?? input.anilist_id;
+    let malId = searchItem.mal_id;
+    const animeTitle = searchItem.title.english || searchItem.title.romaji || input.title;
 
-    if (input.dub && !series.dubbed) return [];
-    if (!input.dub && !series.subbed) return [];
+    // 2. Detail lookup guarantees accurate anilist_id + mal_id for the flix call.
+    if (slug) {
+      const detail = await getAnimeDetail(slug);
+      if (detail) {
+        if (detail.anilist_id) anilistId = detail.anilist_id;
+        if (detail.mal_id) malId = detail.mal_id;
+      }
+    }
 
-    const result = await resolveStreams(series.animeId, input.anilist_id, input.episode, input.dub ? 'dub' : 'sub');
-    streams.push(...result.streams);
+    if (!anilistId) {
+      throw new Error(`reanime: could not resolve anilistId for '${animeTitle || slug}'`);
+    }
+
+    // 3. Language preference: dub only when the input asks for it.
+    const langKey = input.dub ? 'dub' : 'sub';
+
+    // 4. Fetch the Flix server list for this episode.
+    const servers = await getFlixServers(anilistId, input.episode, malId);
+    if (!servers.length) {
+      throw new Error(`reanime: no servers for anilist ${anilistId} episode ${input.episode}`);
+    }
+
+    // 5. Filter by language, prefer HD-2 → HD-1 → first.
+    const langServers = servers.filter(s => s.dataType === langKey);
+    const candidatePool = langServers.length ? langServers : servers;
+    const selectedServer =
+      candidatePool.find(s => s.serverName === 'HD-2') ||
+      candidatePool.find(s => s.serverName === 'HD-1') ||
+      candidatePool[0];
+
+    if (!selectedServer?.dataLink || !isSafeHttpUrl(selectedServer.dataLink)) {
+      throw new Error('reanime: selected server has no usable dataLink');
+    }
+
+    // 6. Extract the direct master.m3u8 from the FlixCloud embed.
+    const extracted = await extractFlixCloud(selectedServer.dataLink);
+
+    const audio = input.dub ? 'Dub' : 'Original';
+    const streams: RawStream[] = [];
+    const seen = new Set<string>();
+
+    const format = detectFormat(extracted.masterUrl);
+    if (format !== 'unknown' && isSafeHttpUrl(extracted.masterUrl)) {
+      seen.add(extracted.masterUrl);
+      streams.push({
+        url: extracted.masterUrl,
+        format,
+        quality: 'auto',
+        audio,
+        provider: 'reanime',
+        headers: extracted.headers,
+      });
+    }
+
+    const subtitles: RawSubtitle[] = extracted.subtitles
+      .filter(sub => isSafeHttpUrl(sub.url))
+      .map(sub => ({
+        url: sub.url,
+        language: sub.lang,
+        language_code: sub.lang.slice(0, 2).toLowerCase() || 'en',
+        format: 'vtt' as const,
+        provider: 'reanime' as const,
+      }));
+
+    return attachSubtitles(uniqueBy(streams, s => s.url), uniqueBy(subtitles, s => s.url));
   } catch (error) {
     console.error(`Reanime error: ${String(error)}`);
+    return [];
   }
-
-  return streams;
 }
