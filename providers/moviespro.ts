@@ -1,33 +1,31 @@
-// MoviesPro movie provider — embed-only.
-// Upstream: moviespro.to → player.cinezo.live (catalog-player embeds).
-// Returns embed URL as a placeholder stream until CatalogPlayerExtractor integration.
+// MoviesPro movie/TV provider.
+// Upstream: moviespro.watch → player.cinezo.live (P-Stream) → proxy1.flikhub.net.
+// The cinezo player is a React SPA that fetches sources from the flikhub proxy API
+// (no inline sources in the embed HTML). We call that API directly.
+// The manifest URL returned by flikhub carries its own proxy + token; we pass it
+// through as-is and the client fetches the inner URL with embedded credentials.
 
-import type { MovieProviderInput, RawStream, RawSubtitle } from './internal/types.js';
+import { attachSubtitles } from './internal/normalizer.js';
+import { extractFlikhub, flikhubToRawStreams, flikhubToRawSubtitles } from './internal/extractors/flikhub.js';
+import type { MovieProviderInput, TvProviderInput, RawStream } from './internal/types.js';
 
-const BASE = 'https://moviespro.to';
-const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36';
-
-function buildHeaders(): Record<string, string> {
-  return { 'User-Agent': UA, Referer: `${BASE}/` };
+function isTvInput(input: MovieProviderInput | TvProviderInput): input is TvProviderInput {
+  return 'season' in input && 'episode' in input;
 }
 
-export async function getMoviesproStreams(input: MovieProviderInput): Promise<RawStream[]> {
+export async function getMoviesproStreams(input: MovieProviderInput | TvProviderInput): Promise<RawStream[]> {
   try {
-    if (!input.tmdb_id && !input.imdb_id) return [];
-
-    // MoviesPro uses IMDb ID for its embed URLs
-    const id = input.imdb_id ?? String(input.tmdb_id);
-    const embedUrl = `${BASE}/embed/movie/${id}`;
-
-    const subtitles: RawSubtitle[] = [];
-    return [{
-      url: embedUrl,
-      format: 'hls',
-      quality: 'auto',
-      audio: 'Original',
-      provider: 'moviespro',
-      headers: buildHeaders(),
-    }];
+    if (!input.tmdb_id) return [];
+    const isTv = isTvInput(input);
+    const result = await extractFlikhub(
+      String(input.tmdb_id),
+      isTv,
+      isTv ? input.season : undefined,
+      isTv ? input.episode : undefined,
+    );
+    const streams = flikhubToRawStreams(result, 'moviespro', 'Original');
+    const subtitles = flikhubToRawSubtitles(result, 'moviespro');
+    return attachSubtitles(streams, subtitles);
   } catch (error) {
     console.error(`MoviesPro error: ${String(error)}`);
     return [];

@@ -157,7 +157,7 @@ export interface SubtitleTrack {
 
 export interface StreamEntry {
   quality: '4k' | '1080p' | '720p' | '480p' | '360p' | 'auto';
-  format: 'mp4' | 'hls' | 'dash' | 'mkv';
+  format: 'mp4' | 'hls' | 'dash' | 'mkv' | 'embed';
   audio: string;
   url: string;
 }

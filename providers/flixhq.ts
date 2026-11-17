@@ -1,6 +1,8 @@
-// FlixHQ movie provider — embed-only (JWPlayer + WebSocket protocol).
-// Upstream: flixhq.to → mfw09.org (JWPlayer with wss://socket.byse.sx).
-// Returns embed URL as a placeholder stream until WebSocket protocol reimplementation.
+// FlixHQ movie provider — embed-only (disabled in manifest).
+// Upstream: flixhq.to → mfw09.org (React SPA, WebSocket wss://socket.byse.sx).
+// Direct extraction requires reimplementing the WebSocket protocol; the alternate
+// Vidmoly server (kaembed.net) is unreachable from this environment. Until a
+// WebSocket-capable extractor exists, the provider is registered but disabled.
 
 import type { MovieProviderInput, RawStream, RawSubtitle } from './internal/types.js';
 
@@ -18,10 +20,12 @@ export async function getFlixhqStreams(input: MovieProviderInput): Promise<RawSt
     const id = input.imdb_id ?? String(input.tmdb_id);
     const embedUrl = `${BASE}/embed/movie/${id}`;
 
+    // Embed URL — not a direct media URL. format 'embed' signals the client to
+    // render it in an iframe. No HLS proxying (shouldProxyStream skips non-HLS).
     const subtitles: RawSubtitle[] = [];
     return [{
       url: embedUrl,
-      format: 'hls',
+      format: 'embed',
       quality: 'auto',
       audio: 'Original',
       provider: 'flixhq',

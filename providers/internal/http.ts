@@ -81,6 +81,70 @@ export async function fetchJson<T>(
   }
 }
 
+// Throwing variant of fetchJson — callers that need to distinguish "upstream
+// failed" from "no data" (e.g. kaa, animegg) use this. Returns the parsed body
+// or throws with the upstream status + a body prefix.
+export async function fetchJsonOrThrow<T = any>(url: string, extra: Record<string, string> = {}, timeout = 25_000): Promise<T> {
+  const response = await fetch(url, {
+    headers: { 'User-Agent': UA, ...requestHeaders(extra), Accept: 'application/json,text/plain,*/*' },
+    signal: AbortSignal.timeout(timeout),
+  });
+  const raw = await response.text();
+  if (!response.ok) throw new Error(`upstream ${response.status}: ${raw.slice(0, 300)}`);
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    throw new Error('upstream returned invalid JSON');
+  }
+}
+
+export async function fetchText(url: string, extra: Record<string, string> = {}, timeout = 25_000): Promise<string> {
+  const response = await fetch(url, {
+    headers: requestHeaders(extra),
+    signal: AbortSignal.timeout(timeout),
+  });
+  if (!response.ok) {
+    const body = (await response.text().catch(() => '')).slice(0, 300);
+    throw new Error(`upstream ${response.status}${body ? `: ${body}` : ''}`);
+  }
+  return response.text();
+}
+
+// ─── Shared headers / constants ───────────────────────────────────────────────
+
+export const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+export const ANILIST_URL = 'https://graphql.anilist.co';
+
+export function requestHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  return {
+    'User-Agent': UA,
+    Accept: 'text/html,application/xhtml+xml,application/json,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    ...extra,
+  };
+}
+
+// ─── AniList GraphQL ─────────────────────────────────────────────────────────
+
+/** Fetch anime metadata from AniList by ID. Returns null on any failure. */
+export async function getAniListMedia(anilistId: number): Promise<any | null> {
+  try {
+    const response = await fetch(ANILIST_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        query: 'query($id:Int){Media(id:$id,type:ANIME){id idMal format status seasonYear title{english romaji native} synonyms coverImage{large medium} episodes}}',
+        variables: { id: anilistId },
+      }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    const payload = await response.json() as any;
+    return payload?.data?.Media ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // ─── Sleep helper ─────────────────────────────────────────────────────────────
 
 export function sleep(ms: number): Promise<void> {

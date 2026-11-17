@@ -172,13 +172,23 @@
       "priority_stream": 3
     },
     {
+      "name": "daratech",
+      "module": "./daratech.ts",
+      "enabled": true,
+      "type": ["movies", "series"],
+      "capabilities": ["streaming", "downloading"],
+      "supportedIds": [],
+      "priority_stream": 4,
+      "priority_download": 1
+    },
+    {
       "name": "cinejoy",
       "module": "./cinejoy.ts",
       "enabled": true,
       "type": ["movies", "series"],
       "capabilities": ["streaming"],
       "supportedIds": ["tmdb"],
-      "priority_stream": 4
+      "priority_stream": 5
     },
     {
       "name": "playimdb",
@@ -187,17 +197,25 @@
       "type": ["movies", "series"],
       "capabilities": ["streaming"],
       "supportedIds": ["tmdb"],
-      "priority_stream": 5
+      "priority_stream": 6
     },
     {
-      "name": "daratech",
-      "module": "./daratech.ts",
+      "name": "moviespro",
+      "module": "./moviespro.ts",
       "enabled": true,
       "type": ["movies", "series"],
-      "capabilities": ["streaming", "downloading"],
-      "supportedIds": [],
-      "priority_stream": 6,
-      "priority_download": 1
+      "capabilities": ["streaming"],
+      "supportedIds": ["tmdb"],
+      "priority_stream": 7
+    },
+    {
+      "name": "cinesrc",
+      "module": "./cinesrc.ts",
+      "enabled": true,
+      "type": ["movies", "series"],
+      "capabilities": ["streaming"],
+      "supportedIds": ["tmdb"],
+      "priority_stream": 9
     },
     {
       "name": "moviesdrive",
@@ -209,31 +227,13 @@
       "priority_download": 3
     },
     {
-      "name": "cinesrc",
-      "module": "./cinesrc.ts",
-      "enabled": false,
-      "type": ["movies", "series"],
-      "capabilities": ["streaming"],
-      "supportedIds": ["tmdb"],
-      "priority_stream": 7
-    },
-    {
-      "name": "moviespro",
-      "module": "./moviespro.ts",
-      "enabled": false,
-      "type": ["movies"],
-      "capabilities": ["streaming"],
-      "supportedIds": ["imdb", "tmdb"],
-      "priority_stream": 8
-    },
-    {
       "name": "flixhq",
       "module": "./flixhq.ts",
       "enabled": false,
       "type": ["movies"],
       "capabilities": ["streaming"],
       "supportedIds": ["imdb", "tmdb"],
-      "priority_stream": 9
+      "priority_stream": 10
     }
   ]
 }

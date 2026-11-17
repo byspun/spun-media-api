@@ -9,7 +9,7 @@
 // Title-only matching (no AniList/MAL ID support).
 // Ported faithfully from ultrasrc src/providers/anime/anikoto.ts.
 
-import { extractMegaPlay } from './internal/megaplay.js';
+import { extractMegaPlay } from './internal/extractors/megaplay.js';
 import { attachSubtitles } from './internal/normalizer.js';
 import { detectFormat, isSafeHttpUrl, uniqueBy } from './internal/utils.js';
 import type { AnimeProviderInput, RawStream, RawSubtitle } from './internal/types.js';

@@ -1,5 +1,6 @@
 import { attachSubtitles } from './internal/normalizer.js';
-import { bestTitleScore, dedupeStreams, fetchJson, getAniListMedia, safeStream, buildTitles, diceCoeff } from './anivexa-utils.js';
+import { bestTitleScore, dedupeStreams, safeStream, buildTitles, diceCoeff } from './internal/utils.js';
+import { fetchJsonOrThrow, getAniListMedia } from './internal/http.js';
 import type { AnimeProviderInput, RawStream } from './internal/types.js';
 
 const BASE = 'https://kaa.lt';
@@ -31,11 +32,11 @@ async function search(query: string): Promise<any[]> {
 }
 
 async function showInfo(slug: string): Promise<any> {
-  return fetchJson<any>(`${BASE}/api/show/${encodeURIComponent(slug)}`, { headers: { Referer: KAA_REFERER } } as any);
+  return fetchJsonOrThrow<any>(`${BASE}/api/show/${encodeURIComponent(slug)}`, { headers: { Referer: KAA_REFERER } } as any);
 }
 
 async function episodePage(slug: string, episode: number): Promise<any> {
-  return fetchJson<any>(`${BASE}/api/show/${encodeURIComponent(slug)}/episodes?ep=${episode}&lang=ja-JP`, { headers: { Referer: KAA_REFERER } } as any);
+  return fetchJsonOrThrow<any>(`${BASE}/api/show/${encodeURIComponent(slug)}/episodes?ep=${episode}&lang=ja-JP`, { headers: { Referer: KAA_REFERER } } as any);
 }
 
 async function allEpisodes(slug: string): Promise<any[]> {
@@ -94,7 +95,7 @@ export async function getKaaStreams(input: AnimeProviderInput): Promise<RawStrea
     const episode = episodes.find((value: any) => Number(value.episode_number) === Number(input.episode));
     if (!episode?.slug) return [];
     const fullSlug = `ep-${input.episode}-${episode.slug}`;
-    const episodeData = await fetchJson<any>(`${BASE}/api/show/${encodeURIComponent(series.slug)}/episode/${encodeURIComponent(fullSlug)}`, { headers: { Referer: KAA_REFERER } } as any);
+    const episodeData = await fetchJsonOrThrow<any>(`${BASE}/api/show/${encodeURIComponent(series.slug)}/episode/${encodeURIComponent(fullSlug)}`, { headers: { Referer: KAA_REFERER } } as any);
     const streams: RawStream[] = [];
     for (const server of Array.isArray(episodeData?.servers) ? episodeData.servers : []) {
       const source = String(server?.src ?? '');

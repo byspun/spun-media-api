@@ -1,6 +1,9 @@
-// CineSrc movie/TV provider — embed-only (requires headless browser for direct HLS).
+// CineSrc movie/TV provider — embed-only.
 // Upstream: cinesrc.st (Next.js frontend, client-side player).
-// Returns embed URL as a placeholder stream until browser-based extraction is available.
+// Direct HLS extraction requires a headless browser (CDP automation), which is
+// not available in this environment. Until then, the provider returns its embed
+// URL with format 'embed' so the client can render it in an iframe. This is the
+// last-resort fallback: embeds take the lowest streaming priority.
 
 import type { MovieProviderInput, TvProviderInput, RawStream, RawSubtitle } from './internal/types.js';
 
@@ -22,19 +25,14 @@ export async function getCinesrcStreams(input: MovieProviderInput | TvProviderIn
 
     if (!input.tmdb_id) return [];
 
-    const params = new URLSearchParams({ type, id: String(input.tmdb_id) });
-    if (isTv) {
-      params.set('s', String(input.season));
-      params.set('e', String(input.episode));
-    }
-
     const embedUrl = `${BASE}/embed/${type}/${input.tmdb_id}${isTv ? `?s=${input.season}&e=${input.episode}` : ''}`;
 
-    // Return embed URL as a placeholder — real HLS extraction requires headless Chrome
+    // Embed URL — not a direct media URL. format 'embed' signals the client to
+    // render it in an iframe. No HLS proxying (shouldProxyStream skips non-HLS).
     const subtitles: RawSubtitle[] = [];
     return [{
       url: embedUrl,
-      format: 'hls',
+      format: 'embed',
       quality: 'auto',
       audio: 'Original',
       provider: 'cinesrc',

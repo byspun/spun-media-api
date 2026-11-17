@@ -8,7 +8,7 @@
 // Ported from ultrasrc src/extractors/flixcloud.ts + flixcloud-wasm.ts.
 
 import { Worker } from 'node:worker_threads';
-import { parseDataLiteral } from './data-literal.js';
+import { parseDataLiteral } from '../parser.js';
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36';
 const FRAGMENTS_OFFSET = 1000;

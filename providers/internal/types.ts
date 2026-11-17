@@ -16,7 +16,7 @@ export interface ManifestProviderEntry {
 export type ProviderId = 'daratech' | 'castle' | 'kaa' | 'animegg' | 'anikoto' | 'mkissa' | 'animeonsen' | 'playimdb' | 'moviesdrive' | 'reanime' | 'anizone' | 'anikage' | 'anv' | 'framextv' | 'vidnest' | 'cinejoy' | 'cinesrc' | 'moviespro' | 'flixhq';
 
 export type ProviderCategory = 'movie' | 'tv' | 'anime';
-export type StreamFormat = 'mp4' | 'hls' | 'dash' | 'mkv';
+export type StreamFormat = 'mp4' | 'hls' | 'dash' | 'mkv' | 'embed';
 export type StreamQuality = '4k' | '1080p' | '720p' | '480p' | '360p' | 'auto';
 
 export interface RawSubtitle {

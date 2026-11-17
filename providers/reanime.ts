@@ -1,11 +1,11 @@
 // Reanime anime provider — direct HLS via FlixCloud embed extraction.
 // Upstream: reanime.to (REST: /api/v1/search, /api/v1/anime/{slug},
 // /api/flix/{anilistId}/{episode}?mal={malId}) → FlixCloud embed (WASM-decrypted
-// master.m3u8 via internal/flixcloud.ts).
+// master.m3u8 via internal/extractors/flixcloud.ts).
 // Server preference: HD-2 → HD-1 → first available, filtered by sub/dub.
 // Ported faithfully from ultrasrc src/providers/anime/reanime.ts.
 
-import { extractFlixCloud } from './internal/flixcloud.js';
+import { extractFlixCloud } from './internal/extractors/flixcloud.js';
 import { attachSubtitles } from './internal/normalizer.js';
 import { detectFormat, isSafeHttpUrl, uniqueBy } from './internal/utils.js';
 import type { AnimeProviderInput, RawStream, RawSubtitle } from './internal/types.js';
