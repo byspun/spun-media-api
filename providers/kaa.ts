@@ -7,6 +7,17 @@ const HLS_BASE = 'https://hls.krussdomi.com/manifest';
 const KAA_REFERER = 'https://kaa.lt/';
 const HLS_REFERER = 'https://krussdomi.com/';
 
+// Map a kaa `ln=` locale tag (e.g. "ja-JP", "en-US") to the audio label exposed on a RawStream.
+// kaa's CDN declares each server's language via the `ln=` query param on its player `src`
+// (e.g. "...&ln=ja-JP"). When that param is present it is authoritative; otherwise we fall
+// back to the dub/sub flag from the input.
+function audioLabel(ln: string | null, dub: boolean): string {
+  const locale = String(ln ?? '').toLowerCase();
+  if (locale.startsWith('en')) return 'English';
+  if (locale.startsWith('ja')) return 'Japanese';
+  return dub ? 'English' : 'Japanese';
+}
+
 async function search(query: string): Promise<any[]> {
   const response = await fetch(`${BASE}/api/fsearch`, {
     method: 'POST',
@@ -89,7 +100,12 @@ export async function getKaaStreams(input: AnimeProviderInput): Promise<RawStrea
       const source = String(server?.src ?? '');
       const id = source.match(/[?&]id=([^&]+)/)?.[1];
       if (!id) continue;
-      const stream = safeStream({ url: `${HLS_BASE}/${id}/master.m3u8`, type: 'hls', quality: 'auto' }, 'kaa', input.dub ? 'English' : 'Japanese', 'hls', { Referer: KAA_REFERER });
+      const ln = source.match(/[?&]ln=([^&]+)/)?.[1] ?? null;
+      const audio = audioLabel(ln, input.dub);
+      // When the server declares its own language, only keep servers matching the requested audio.
+      // (Without a declared language the server is treated as generic and always kept.)
+      if (ln && audio !== (input.dub ? 'English' : 'Japanese')) continue;
+      const stream = safeStream({ url: `${HLS_BASE}/${id}/master.m3u8`, type: 'hls', quality: 'auto' }, 'kaa', audio, 'hls', { Referer: KAA_REFERER });
       if (stream) streams.push(stream);
     }
     return attachSubtitles(dedupeStreams(streams), []);
