@@ -4,7 +4,6 @@ import type { MovieProviderInput, TvProviderInput, RawDownload } from './interna
 
 const MAIN_URL = 'https://new4.moviesdrive.christmas';
 const DOMAINS_URL = 'https://raw.githubusercontent.com/phisher98/TVVVV/refs/heads/main/domains.json';
-const TMDB_API_KEY = '1865f43a0549ca50d341dd9ab8b29f49';
 
 const HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
@@ -120,13 +119,16 @@ async function hubCloudExtractor(url: string, referer: string): Promise<Array<{ 
     const pxlMatch = pageData.match(/var\s+pxl\s*=\s*["']([^"']+)["']/i);
 
     const links: Array<{ name: string; quality: number; url: string; size: string }> = [];
-    const linkRegex = /<a\s+href=["']([^"']+)["'][^>]*>([^<]*)<\/a>/gi;
+    // Capture everything up to </a> (including nested tags like <i> icons), then strip tags
+    const linkRegex = /<a\s+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
     const blocked = ['tinyurl', 'telegram', 'hubcloud.cx/tg', 'hubcloud.foo/tg'];
 
     let linkMatch: RegExpExecArray | null;
     while ((linkMatch = linkRegex.exec(pageData)) !== null) {
       let link = linkMatch[1];
-      const text = (linkMatch[2] || '').toLowerCase().trim();
+      const rawText = linkMatch[2] || '';
+      // Strip nested HTML tags to get the visible text
+      const text = rawText.replace(/<[^>]+>/g, '').toLowerCase().trim();
       if (!link || blocked.some(b => link.includes(b))) continue;
 
       if (link.includes('negn6f') && pxlMatch) link = pxlMatch[1];
@@ -187,18 +189,19 @@ async function loadExtractor(url: string, referer: string): Promise<Array<{ name
   }
 }
 
-function getTmdbMetadata(tmdbId: number, mediaType: 'movie' | 'tv', season?: number, episode?: number): Promise<{ name: string; year: string; duration: string }> {
+function getTmdbMetadata(tmdbId: number, mediaType: 'movie' | 'tv', tmdbApiKey: string, season?: number, episode?: number): Promise<{ name: string; year: string; duration: string }> {
   return (async () => {
+    if (!tmdbApiKey) return { name: 'Unknown Title', year: 'N/A', duration: mediaType === 'movie' ? 'N/A' : '45 min' };
     try {
       const type = mediaType === 'movie' ? 'movie' : 'tv';
-      const url = `https://api.themoviedb.org/3/${type}/${tmdbId}?api_key=${TMDB_API_KEY}`;
+      const url = `https://api.themoviedb.org/3/${type}/${tmdbId}?api_key=${encodeURIComponent(tmdbApiKey)}`;
       const res = await fetchWithTimeout(url, { headers: { 'User-Agent': HEADERS['User-Agent'], 'Accept': 'application/json' }, timeout: 10_000 });
       if (!res.ok) return { name: 'Unknown Title', year: 'N/A', duration: mediaType === 'movie' ? 'N/A' : '45 min' };
       const data = await res.json() as { title?: string; name?: string; runtime?: number; release_date?: string; first_air_date?: string; episode_run_time?: number[] };
       let duration = mediaType === 'movie' ? 'N/A' : '45 min';
       if (mediaType === 'movie' && data.runtime) duration = `${data.runtime} min`;
       else if (mediaType === 'tv' && season && episode) {
-        const epUrl = `https://api.themoviedb.org/3/tv/${tmdbId}/season/${season}/episode/${episode}?api_key=${TMDB_API_KEY}`;
+        const epUrl = `https://api.themoviedb.org/3/tv/${tmdbId}/season/${season}/episode/${episode}?api_key=${encodeURIComponent(tmdbApiKey)}`;
         const epRes = await fetchWithTimeout(epUrl, { headers: { 'User-Agent': HEADERS['User-Agent'], 'Accept': 'application/json' }, timeout: 10_000 });
         if (epRes.ok) {
           const epData = await epRes.json() as { runtime?: number };
@@ -254,21 +257,32 @@ export async function getMoviesdriveDownloads(input: MovieProviderInput | TvProv
     console.log(`[MoviesDrive] Querying for TMDB: ${input.tmdb_id}, Type: ${'season' in input ? 'tv' : 'movie'}`);
     const isTv = 'season' in input;
     const mediaType = isTv ? 'tv' : 'movie';
-    const tmdbMeta = await getTmdbMetadata(input.tmdb_id, mediaType, isTv ? input.season : undefined, isTv ? input.episode : undefined);
+    const tmdbMeta = await getTmdbMetadata(input.tmdb_id, mediaType, tmdbApiKey, isTv ? input.season : undefined, isTv ? input.episode : undefined);
     const cleanTitle = tmdbMeta.name;
-    const imdbId = undefined; // We don't have IMDB ID in input
+    const imdbId = (input as any).imdb_id || undefined;
 
     const mainUrl = await getMainUrl();
     let match: any = null;
 
-    // Try IMDB search first (if we had it), then title search
-    if (cleanTitle) {
+    // Try IMDB search first (more reliable than title), then title search
+    if (imdbId) {
+      try {
+        const searchUrl = `${mainUrl}/search.php?q=${encodeURIComponent(imdbId)}&page=1`;
+        const searchRes = await fetchWithTimeout(searchUrl, { headers: HEADERS, timeout: 15_000 });
+        if (searchRes.ok) {
+          const searchData = await searchRes.json() as { hits?: Array<{ document: any }> };
+          match = await findMatch((searchData.hits || []).map((h) => h.document), mediaType, cleanTitle, imdbId, isTv ? input.season : undefined);
+        }
+      } catch {}
+    }
+
+    if (!match && cleanTitle) {
       try {
         const searchUrl = `${mainUrl}/search.php?q=${encodeURIComponent(cleanTitle)}&page=1`;
         const searchRes = await fetchWithTimeout(searchUrl, { headers: HEADERS, timeout: 15_000 });
         if (searchRes.ok) {
           const searchData = await searchRes.json() as { hits?: Array<{ document: any }> };
-          match = findMatch((searchData.hits || []).map((h) => h.document), mediaType, cleanTitle, imdbId, isTv ? input.season : undefined);
+          match = await findMatch((searchData.hits || []).map((h) => h.document), mediaType, cleanTitle, imdbId, isTv ? input.season : undefined);
         }
       } catch {}
     }
@@ -279,6 +293,10 @@ export async function getMoviesdriveDownloads(input: MovieProviderInput | TvProv
     }
 
     const permalink = match.permalink;
+    if (!permalink || typeof permalink !== 'string') {
+      console.log('[MoviesDrive] Match has no permalink');
+      return [];
+    }
     const href = permalink.startsWith('http') ? permalink : `${mainUrl}${permalink}`;
 
     const pageRes = await fetchWithTimeout(href, { headers: HEADERS, timeout: 15_000 });

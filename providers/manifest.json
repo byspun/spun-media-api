@@ -128,12 +128,12 @@
     {
       "name": "mkissa",
       "module": "./mkissa.ts",
-      "enabled": true,
+      "enabled": false,
       "type": ["anime", "movies", "series"],
       "capabilities": ["streaming", "downloading"],
       "supportedIds": ["anilist", "tmdb"],
       "priority_stream": 8,
-      "priority_download": 2
+      "priority_download": 3
     },
     {
       "name": "animeonsen",
@@ -191,15 +191,6 @@
       "priority_stream": 5
     },
     {
-      "name": "playimdb",
-      "module": "./playimdb.ts",
-      "enabled": true,
-      "type": ["movies", "series"],
-      "capabilities": ["streaming"],
-      "supportedIds": ["tmdb"],
-      "priority_stream": 6
-    },
-    {
       "name": "moviespro",
       "module": "./moviespro.ts",
       "enabled": true,
@@ -224,16 +215,7 @@
       "type": ["movies", "series"],
       "capabilities": ["downloading"],
       "supportedIds": ["tmdb"],
-      "priority_download": 3
-    },
-    {
-      "name": "flixhq",
-      "module": "./flixhq.ts",
-      "enabled": false,
-      "type": ["movies"],
-      "capabilities": ["streaming"],
-      "supportedIds": ["imdb", "tmdb"],
-      "priority_stream": 10
+      "priority_download": 2
     }
   ]
 }

@@ -384,7 +384,7 @@ export class HealthMonitor {
 
     // Run checks with individual timeouts and error isolation
     const checkPromises = jobs.map(async (job) => {
-      const timeoutMs = 30000; // 30 second timeout per provider
+      const timeoutMs = 120000; // 120 second timeout per provider — multi-hop download chains (moviesdrive) can take >60s under concurrent load
       try {
         const result = await Promise.race([
           this.checkProvider(job),

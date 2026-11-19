@@ -363,6 +363,8 @@ function providerConfig(name: ProviderId): unknown {
       return { baseUrl: env.daratechBase, apiKey: env.daratechKey };
     case 'castle':
       return env.tmdbKey;
+    case 'moviesdrive':
+      return env.tmdbKey;
     default:
       return undefined;
   }

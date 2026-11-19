@@ -1,4 +1,4 @@
-import { fetchJson, fetchWithTimeout } from './internal/http.js';
+import { fetchJson, fetchWithTimeout, getAniListMedia } from './internal/http.js';
 import { isSafeHttpUrl, detectFormat, normalizeQuality } from './internal/utils.js';
 import type { AnimeProviderInput, RawStream, RawSubtitle } from './internal/types.js';
 
@@ -204,7 +204,10 @@ async function resolveSeries(anilistId: number, title: string, media: any): Prom
 function snapshot(html: string): string {
   const match = [...String(html).matchAll(/wire:snapshot="([^"]*)"/gi)]
     .find(item => item[1].includes('pages.anime-detail'));
-  return match ? match[1] : '';
+  if (!match) return '';
+  // Livewire v3 expects the snapshot as a decoded JSON string, not the raw
+  // HTML-encoded attribute value. Decode &quot; → " and &amp; → & before sending.
+  return match[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&#039;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>');
 }
 
 function cursor(html: string): string | null {
@@ -216,6 +219,10 @@ function hasMore(html: string): boolean {
 }
 
 function csrf(html: string): string {
+  // Livewire v3 uses a data-csrf attribute on the element, distinct from the
+  // <meta name="csrf-token"> tag. The data-csrf token is what /livewire/update expects.
+  const dataCsrf = String(html).match(/data-csrf="([^"]+)"/i)?.[1];
+  if (dataCsrf) return dataCsrf;
   return String(html).match(/csrf-token"\s+content="([^"]+)"/i)?.[1] || '';
 }
 
@@ -273,6 +280,9 @@ async function initialPage(html: string, cookies: string[]): Promise<{ items: an
 }
 
 async function loadPage(state: any, slug: string): Promise<any> {
+  // Livewire v3 payload format: _token in body, snapshot as a JSON string (the raw
+  // HTML-encoded attribute value), X-CSRF-TOKEN header set to the data-csrf token.
+  // The snapshot must NOT be pre-parsed into an object — v3 expects the string form.
   const response = await request(`${ANIZONE_BASE}/livewire/update`, {
     method: 'POST',
     headers: {
@@ -286,6 +296,7 @@ async function loadPage(state: any, slug: string): Promise<any> {
       'Cookie': cookieHeader(state.cookies),
     },
     body: JSON.stringify({
+      _token: state.csrf,
       components: [{
         snapshot: state.snapshot,
         updates: {},
@@ -375,8 +386,11 @@ export async function getAnizoneStreams(input: AnimeProviderInput): Promise<RawS
   const streams: RawStream[] = [];
 
   try {
-    // Build minimal media object for title matching
-    const media: any = {
+    // Fetch real AniList media for proper title matching and episode count.
+    // The stub approach (episodes: 0) caused ambiguity between Naruto (220 eps)
+    // and Naruto Shippuden (500 eps) — both scored identically, triggering the
+    // runner-up tie-breaker and returning null. The real media disambiguates.
+    const media = await getAniListMedia(input.anilist_id) || {
       title: { english: input.title, romaji: null, native: null },
       format: 'TV',
       status: 'FINISHED',
